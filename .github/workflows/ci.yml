@@ -1,0 +1,174 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  IMAGE_NAME: alpine-certificates
+  REGISTRY: ghcr.io
+
+jobs:
+  lint:
+    name: Lint Dockerfile
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Lint Dockerfile
+      uses: hadolint/hadolint-action@v3.1.0
+      with:
+        dockerfile: alpine-certificates/Dockerfile
+        failure-threshold: warning
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Build Docker image
+      run: |
+        docker build -t ${{ env.IMAGE_NAME }}:test ./alpine-certificates
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.IMAGE_NAME }}:test
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  test:
+    name: Test Container
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        alpine-version: [3.18, 3.19, 3.20]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build image
+      run: |
+        docker build \
+          --build-arg ALPINE_VERSION=${{ matrix.alpine-version }} \
+          -t ${{ env.IMAGE_NAME }}:test-alpine-${{ matrix.alpine-version }} \
+          ./alpine-certificates
+    
+    - name: Test container
+      run: |
+        docker run --rm ${{ env.IMAGE_NAME }}:test-alpine-${{ matrix.alpine-version }}
+    
+    - name: Test health check
+      run: |
+        docker run --rm --health-interval=5s --health-timeout=3s \
+          ${{ env.IMAGE_NAME }}:test-alpine-${{ matrix.alpine-version }} \
+          sleep 30
+    
+    - name: Test certificate bundle
+      run: |
+        docker run --rm \
+          -v ${{ github.workspace }}/test-certs:/etc/ssl/certs \
+          ${{ env.IMAGE_NAME }}:test-alpine-${{ matrix.alpine-version }}
+        
+        # Verify the bundle was created
+        test -f ${{ github.workspace }}/test-certs/ca-certificates.crt
+
+  build-and-push:
+    name: Build and Push
+    runs-on: ubuntu-latest
+    needs: [lint, security-scan, test]
+    if: github.ref == 'refs/heads/main'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./alpine-certificates
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Get version
+      id: version
+      run: |
+        # Extract version from git tag or use timestamp
+        if [ -n "$(git describe --tags --exact-match 2>/dev/null)" ]; then
+          VERSION=$(git describe --tags --exact-match)
+        else
+          VERSION=$(date +%Y.%m.%d-%H%M%S)
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+    
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        release_name: Release v${{ steps.version.outputs.version }}
+        draft: false
+        prerelease: false
+        body: |
+          ## Changes in v${{ steps.version.outputs.version }}
+          
+          - Updated to latest Alpine Linux version
+          - Enhanced security with non-root user
+          - Improved error handling and logging
+          - Added health checks
+          - Optimized Docker build process
+          
+          ## Docker Image
+          ```bash
+          docker pull ${{ env.REGISTRY }}/${{ github.repository }}:latest
+          ```
