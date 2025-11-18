@@ -1,0 +1,278 @@
+#!/bin/sh
+
+# Exit on any error, treat unset variables as errors, and exit on pipe failures
+set -eu
+
+# generate-certificates
+# Auto-generate self-signed certificates for kubernetes
+# - Generate self-signed CA
+# - Generate a wild-card SSL certificate, based on that CA.
+# - Expose all of the above through /output
+
+# Logging function
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
+}
+
+# Function to validate required tools
+validate_tools() {
+    local missing_tools=""
+    
+    for tool in cfssl cfssljson openssl; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            missing_tools="$missing_tools $tool"
+        fi
+    done
+    
+    if [ -n "$missing_tools" ]; then
+        log "ERROR: Missing required tools:$missing_tools"
+        return 1
+    fi
+    
+    log "All required tools are available"
+}
+
+# Function to validate environment variables
+validate_config() {
+    local errors=0
+    
+    # Check required variables
+    if [ -z "${CERT_DOMAIN:-}" ]; then
+        log "ERROR: CERT_DOMAIN is required"
+        errors=$((errors + 1))
+    fi
+    
+    if [ -z "${CA_SUBJECT:-}" ]; then
+        log "ERROR: CA_SUBJECT is required"
+        errors=$((errors + 1))
+    fi
+    
+    # Validate domain format
+    if [ -n "${CERT_DOMAIN:-}" ]; then
+        case "$CERT_DOMAIN" in
+            *..*|*.*) 
+                # Valid domain format
+                ;;
+            *)
+                log "ERROR: Invalid domain format: $CERT_DOMAIN"
+                errors=$((errors + 1))
+                ;;
+        esac
+    fi
+    
+    # Validate key size
+    case "${KEY_SIZE:-256}" in
+        2048|4096|256|384|521)
+            # Valid key size
+            ;;
+        *)
+            log "ERROR: Invalid key size: ${KEY_SIZE:-256}. Use 2048/4096 for RSA or 256/384/521 for ECDSA"
+            errors=$((errors + 1))
+            ;;
+    esac
+    
+    if [ "$errors" -gt 0 ]; then
+        log "Configuration validation failed with $errors errors"
+        return 1
+    fi
+    
+    log "Configuration validation passed"
+}
+
+# Function to ensure output directory exists and is writable
+ensure_output_dir() {
+    if [ ! -d "/output" ]; then
+        log "Creating output directory"
+        mkdir -p /output
+    fi
+    
+    if [ ! -w "/output" ]; then
+        log "ERROR: Output directory is not writable"
+        return 1
+    fi
+    
+    log "Output directory is ready"
+}
+
+# Function to generate configuration files
+generate_configs() {
+    log "Generating configuration files"
+    
+    # ca-config.json
+    cat > ca-config.json <<CA_CONFIG
+{
+  "signing": {
+    "default": {
+      "expiry": "${EXPIRY:-8760h}"
+    },
+    "profiles": {
+      "www": {
+        "usages": [
+          "signing",
+          "cert sign",
+          "key encipherment",
+          "server auth",
+          "client auth"
+        ],
+        "expiry": "${EXPIRY:-8760h}"
+      }
+    }
+  }
+}
+CA_CONFIG
+
+    # ca-csr.json
+    cat > ca-csr.json <<CA_CSR
+{
+  "CN": "${CA_SUBJECT:-GitLab}",
+  "key": {
+    "algo": "${ALGORITHM:-ecdsa}",
+    "size": ${KEY_SIZE:-256}
+  },
+  "names": [
+    {
+      "O": "${CA_ORG:-GitLab}",
+      "OU": "${CA_ORG_UNIT:-Cloud Native}"
+    }
+  ]
+}
+CA_CSR
+
+    # wildcard-csr.json
+    cat > wildcard-csr.json <<WILDCARD_CSR
+{
+  "CN": "${CERT_SUBJECT:-GitLab}",
+  "hosts": [
+    "${CERT_DOMAIN}",
+    "*.${CERT_DOMAIN}",
+    "localhost",
+    "127.0.0.1"
+  ],
+  "key": {
+    "algo": "${ALGORITHM:-ecdsa}",
+    "size": ${KEY_SIZE:-256}
+  }
+}
+WILDCARD_CSR
+
+    log "Configuration files generated successfully"
+}
+
+# Function to generate CA certificate
+generate_ca() {
+    log "Generating CA certificate"
+    
+    if ! cfssl gencert -initca ca-csr.json | cfssljson -bare ca; then
+        log "ERROR: Failed to generate CA certificate"
+        return 1
+    fi
+    
+    # Verify CA files were created
+    if [ ! -f "ca.pem" ] || [ ! -f "ca-key.pem" ]; then
+        log "ERROR: CA certificate files not found"
+        return 1
+    fi
+    
+    log "CA certificate generated successfully"
+}
+
+# Function to generate wildcard certificate
+generate_wildcard() {
+    log "Generating wildcard certificate for ${CERT_DOMAIN}"
+    
+    if ! cfssl gencert \
+        -ca=ca.pem \
+        -ca-key=ca-key.pem \
+        --config=ca-config.json \
+        --profile=www \
+        wildcard-csr.json | cfssljson -bare wildcard; then
+        log "ERROR: Failed to generate wildcard certificate"
+        return 1
+    fi
+    
+    # Verify wildcard files were created
+    if [ ! -f "wildcard.pem" ] || [ ! -f "wildcard-key.pem" ]; then
+        log "ERROR: Wildcard certificate files not found"
+        return 1
+    fi
+    
+    log "Wildcard certificate generated successfully"
+}
+
+# Function to verify generated certificates
+verify_certificates() {
+    log "Verifying generated certificates"
+    
+    # Verify CA certificate
+    if ! openssl x509 -in ca.pem -text -noout >/dev/null 2>&1; then
+        log "ERROR: CA certificate verification failed"
+        return 1
+    fi
+    
+    # Verify wildcard certificate
+    if ! openssl x509 -in wildcard.pem -text -noout >/dev/null 2>&1; then
+        log "ERROR: Wildcard certificate verification failed"
+        return 1
+    fi
+    
+    # Verify certificate chain
+    if ! openssl verify -CAfile ca.pem wildcard.pem >/dev/null 2>&1; then
+        log "ERROR: Certificate chain verification failed"
+        return 1
+    fi
+    
+    log "Certificate verification passed"
+}
+
+# Function to display certificate information
+display_info() {
+    log "Certificate generation completed successfully"
+    log "Generated files:"
+    
+    for file in ca.pem ca-key.pem wildcard.pem wildcard-key.pem; do
+        if [ -f "$file" ]; then
+            size=$(wc -c < "$file")
+            log "  $file ($size bytes)"
+        fi
+    done
+    
+    log "CA Subject: ${CA_SUBJECT:-GitLab}"
+    log "Certificate Domain: ${CERT_DOMAIN}"
+    log "Algorithm: ${ALGORITHM:-ecdsa}"
+    log "Key Size: ${KEY_SIZE:-256}"
+    log "Expiry: ${EXPIRY:-8760h}"
+}
+
+# Main execution
+main() {
+    log "Starting certificate generation process"
+    
+    # Set default values
+    ALGORITHM="${ALGORITHM:-ecdsa}"
+    KEY_SIZE="${KEY_SIZE:-256}"
+    EXPIRY="${EXPIRY:-8760h}"
+    CA_SUBJECT="${CA_SUBJECT:-GitLab}"
+    CA_ORG="${CA_ORG:-GitLab}"
+    CA_ORG_UNIT="${CA_ORG_UNIT:-Cloud Native}"
+    CERT_SUBJECT="${CERT_SUBJECT:-GitLab}"
+    CERT_DOMAIN="${CERT_DOMAIN:-example.com}"
+    
+    # Change to output directory
+    cd /output
+    
+    # Run validation and generation steps
+    validate_tools
+    validate_config
+    ensure_output_dir
+    generate_configs
+    generate_ca
+    generate_wildcard
+    verify_certificates
+    display_info
+    
+    log "Certificate generation process completed successfully"
+}
+
+# Run main function
+main "$@"
+
