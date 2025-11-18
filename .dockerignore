@@ -1,0 +1,57 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Documentation files
+README.md
+LICENSE
+*.md
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.tar
+*.tar.gz
+*.zip
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Logs
+*.log
+logs/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Docker
+Dockerfile.*
+docker-compose*.yml
+.dockerignore
+
+# Test files
+test/
+tests/
+*_test.go
+*_test.py
+*.test
+
+# Development files
+Makefile.dev
+.env.local
+.env.development
