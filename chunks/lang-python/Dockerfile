@@ -16,20 +16,24 @@ ARG DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC
 
 # Install build dependencies with cache mount
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        build-essential \
-        ca-certificates \
-        curl \
-        file \
-        gcc \
-        libffi-dev \
-        libssl-dev \
-        make \
-        zlib1g-dev \
-        pkg-config
+RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache \
+    --mount=type=cache,target=/var/lib/apt,id=apt-lib \
+    rm -f /var/lib/apt/lists/lock \
+    && rm -f /var/cache/apt/archives/lock \
+    && rm -f /var/lib/dpkg/lock* \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    file \
+    gcc \
+    libffi-dev \
+    libssl-dev \
+    make \
+    zlib1g-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
 # Build Python from source
 ARG BUILD_DIR=/tmp/build
@@ -52,15 +56,18 @@ ARG BASE_USER_GID
 ARG BASE_USERNAME
 
 # Install runtime dependencies only
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        libssl3 \
-        libffi8 \
-        && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-runtime \
+    --mount=type=cache,target=/var/lib/apt,id=apt-lib-runtime \
+    rm -f /var/lib/apt/lists/lock \
+    && rm -f /var/cache/apt/archives/lock \
+    && rm -f /var/lib/dpkg/lock* \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    libssl3 \
+    libffi8 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy Python from builder stage
 COPY --from=python-builder /usr/local /usr/local
