@@ -54,20 +54,11 @@ markdown_extensions:
 # Navigation
 nav:
   - Home: index.md
-  - Getting Started:
-      - Installation: getting-started/installation.md
-      - Quick Start: getting-started/quick-start.md
-  - Development:
-      - Setup: development/setup.md
-      - Building: development/building.md
-      - Testing: development/testing.md
-  - API Reference:
-      - Go: api/go.md
-      - Python: api/python.md
-      - Node.js: api/nodejs.md
   - Contributing:
       - Guidelines: contributing/guidelines.md
       - Code of Conduct: contributing/code-of-conduct.md
+  - Development:
+      - Setup: development/setup.md
 
 # Plugins
 plugins:
