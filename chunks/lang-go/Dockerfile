@@ -16,16 +16,20 @@ ARG DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC
 
 # Install build dependencies with cache mount
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        build-essential \
-        ca-certificates \
-        curl \
-        file \
-        gcc \
-        make
+RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache \
+    --mount=type=cache,target=/var/lib/apt,id=apt-lib \
+    rm -f /var/lib/apt/lists/lock \
+    && rm -f /var/cache/apt/archives/lock \
+    && rm -f /var/lib/dpkg/lock* \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    file \
+    gcc \
+    make \
+    && rm -rf /var/lib/apt/lists/*
 
 # Download and install Go
 ARG BUILD_DIR=/tmp/build
@@ -44,14 +48,17 @@ ARG BASE_USER_GID
 ARG BASE_USERNAME
 
 # Install runtime dependencies only
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        git \
-        && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-runtime \
+    --mount=type=cache,target=/var/lib/apt,id=apt-lib-runtime \
+    rm -f /var/lib/apt/lists/lock \
+    && rm -f /var/cache/apt/archives/lock \
+    && rm -f /var/lib/dpkg/lock* \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy Go from builder stage
 COPY --from=go-builder /usr/local/go /usr/local/go
