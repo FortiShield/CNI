@@ -63,10 +63,19 @@ jobs:
       id: vars
       run: echo "namespace=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
+    - name: Set build context
+      id: context
+      run: |
+        if [[ "${{ matrix.component }}" == "base" || "${{ matrix.component }}" == "container-registry" || "${{ matrix.component }}" == "kubectl" || "${{ matrix.component }}" == "postgresql" || "${{ matrix.component }}" == "alpine-certificates" || "${{ matrix.component }}" == "git-base" || "${{ matrix.component }}" == "cfssl-self-sign" ]]; then
+          echo "context=./${{ matrix.component }}" >> $GITHUB_OUTPUT
+        else
+          echo "context=./chunks/${{ matrix.component }}" >> $GITHUB_OUTPUT
+        fi
+
     - name: Build ${{ matrix.component }}
       uses: docker/build-push-action@v5
       with:
-        context: ./chunks/${{ matrix.component }}
+        context: ${{ steps.context.outputs.context }}
         platforms: linux/amd64
         push: false
         load: true
@@ -125,10 +134,19 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     
+    - name: Set build context
+      id: context-sign
+      run: |
+        if [[ "${{ matrix.component }}" == "base" || "${{ matrix.component }}" == "container-registry" || "${{ matrix.component }}" == "kubectl" || "${{ matrix.component }}" == "postgresql" || "${{ matrix.component }}" == "alpine-certificates" || "${{ matrix.component }}" == "git-base" || "${{ matrix.component }}" == "cfssl-self-sign" ]]; then
+          echo "context=./${{ matrix.component }}" >> $GITHUB_OUTPUT
+        else
+          echo "context=./chunks/${{ matrix.component }}" >> $GITHUB_OUTPUT
+        fi
+
     - name: Build and push image
       uses: docker/build-push-action@v5
       with:
-        context: ./${{ matrix.component }}
+        context: ${{ steps.context-sign.outputs.context }}
         platforms: linux/amd64,linux/arm64
         push: true
         tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:signed
@@ -172,10 +190,19 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
     
+    - name: Set build context
+      id: context-scan
+      run: |
+        if [[ "${{ matrix.component }}" == "base" || "${{ matrix.component }}" == "container-registry" || "${{ matrix.component }}" == "kubectl" || "${{ matrix.component }}" == "postgresql" || "${{ matrix.component }}" == "alpine-certificates" || "${{ matrix.component }}" == "git-base" || "${{ matrix.component }}" == "cfssl-self-sign" ]]; then
+          echo "context=./${{ matrix.component }}" >> $GITHUB_OUTPUT
+        else
+          echo "context=./chunks/${{ matrix.component }}" >> $GITHUB_OUTPUT
+        fi
+
     - name: Build image for scanning
       uses: docker/build-push-action@v5
       with:
-        context: ./${{ matrix.component }}
+        context: ${{ steps.context-scan.outputs.context }}
         platforms: linux/amd64
         push: false
         load: true
