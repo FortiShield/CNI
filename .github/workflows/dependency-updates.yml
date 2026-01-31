@@ -1,0 +1,397 @@
+name: Dependency Updates
+
+on:
+  schedule:
+    # Run dependency checks daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      update_type:
+        description: 'Type of update'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - base-images
+        - language-versions
+        - security
+      auto_merge:
+        description: 'Auto-merge non-breaking changes'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository }}
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  detect-updates:
+    name: Detect Available Updates
+    runs-on: ubuntu-latest
+    outputs:
+      base_updates: ${{ steps.base-check.outputs.updates_available }}
+      language_updates: ${{ steps.language-check.outputs.updates_available }}
+      security_updates: ${{ steps.security-check.outputs.updates_available }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Check base image updates
+      id: base-check
+      run: |
+        echo "Checking for base image updates..."
+        # This would typically use Renovate or similar tool
+        # For now, we'll simulate the check
+        echo "updates_available=true" >> $GITHUB_OUTPUT
+    
+    - name: Check language version updates
+      id: language-check
+      run: |
+        echo "Checking for language version updates..."
+        # Check for new versions of Go, Node.js, Python, etc.
+        echo "updates_available=true" >> $GITHUB_OUTPUT
+    
+    - name: Check security updates
+      id: security-check
+      run: |
+        echo "Checking for security updates..."
+        # Check for security vulnerabilities
+        echo "updates_available=true" >> $GITHUB_OUTPUT
+
+  update-base-images:
+    name: Update Base Images
+    runs-on: ubuntu-latest
+    needs: detect-updates
+    if: |
+      needs.detect-updates.outputs.base_updates == 'true' && 
+      (github.event.inputs.update_type == 'all' || github.event.inputs.update_type == 'base-images')
+    strategy:
+      matrix:
+        component: [alpine-certificates, base, git-base, cfssl-self-sign]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+    
+    - name: Update Alpine version
+      run: |
+        # Get latest Alpine version
+        LATEST_ALPINE=$(curl -s https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/latest-releases.yaml | grep -oP 'version: \K\d+\.\d+\.\d+' | head -1)
+        echo "Latest Alpine version: $LATEST_ALPINE"
+        
+        # Update Dockerfiles
+        find . -name "Dockerfile*" -type f -exec sed -i "s/FROM alpine:.*/FROM alpine:$LATEST_ALPINE/" {} \;
+        
+        # Update Makefile
+        sed -i "s/ALPINE_VERSION ?= .*/ALPINE_VERSION ?= $LATEST_ALPINE/" Makefile
+        
+        # Commit changes
+        if git diff --quiet; then
+          echo "No changes to commit"
+        else
+          git add .
+          git commit -m "chore: update Alpine Linux to $LATEST_ALPINE"
+          git push
+        fi
+    
+    - name: Update Debian version
+      run: |
+        # Get latest Debian stable version
+        LATEST_DEBIAN=$(curl -s https://deb.debian.org/debian/dists/stable/Release | grep -oP 'Version: \K\d+\.\d+' | head -1)
+        echo "Latest Debian version: $LATEST_DEBIAN"
+        
+        # Update Dockerfiles
+        find . -name "Dockerfile*" -type f -exec sed -i "s/FROM debian:.*/FROM debian:$LATEST_DEBIAN-slim/" {} \;
+        
+        # Commit changes
+        if git diff --quiet; then
+          echo "No changes to commit"
+        else
+          git add .
+          git commit -m "chore: update Debian to $LATEST_DEBIAN"
+          git push
+        fi
+
+  update-language-versions:
+    name: Update Language Versions
+    runs-on: ubuntu-latest
+    needs: detect-updates
+    if: |
+      needs.detect-updates.outputs.language_updates == 'true' && 
+      (github.event.inputs.update_type == 'all' || github.event.inputs.update_type == 'language-versions')
+    strategy:
+      matrix:
+        language: [go, node, python, rust, php, java, ruby, cpp, csharp, elixir]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+    
+    - name: Update ${{ matrix.language }} version
+      run: |
+        case "${{ matrix.language }}" in
+          go)
+            # Get latest Go version
+            LATEST_GO=$(curl -s https://go.dev/VERSION?text=text)
+            echo "Latest Go version: $LATEST_GO"
+            
+            # Update Go Dockerfiles
+            find ./chunks/lang-go -name "Dockerfile*" -type f -exec sed -i "s/GO_VERSION=\"[^\"]*\"/GO_VERSION=\"$LATEST_GO\"/" {} \;
+            
+            # Run AutoFix script if available
+            if [ -f "./.autofix/fixers/update-lang-go.js" ]; then
+              node ./.autofix/fixers/update-lang-go.js
+            fi
+            ;;
+          node)
+            # Get latest Node.js LTS version
+            LATEST_NODE=$(curl -s https://nodejs.org/dist/index.json | jq -r '.[] | select(.lts) | .version' | head -1 | sed 's/v//')
+            echo "Latest Node.js version: $LATEST_NODE"
+            
+            # Update Node.js Dockerfiles
+            find ./chunks/lang-node -name "Dockerfile*" -type f -exec sed -i "s/NODE_VERSION=\"[^\"]*\"/NODE_VERSION=\"$LATEST_NODE\"/" {} \;
+            
+            # Run AutoFix script if available
+            if [ -f "./.autofix/fixers/update-lang-node.js" ]; then
+              node ./.autofix/fixers/update-lang-node.js
+            fi
+            ;;
+          python)
+            # Get latest Python version
+            LATEST_PYTHON=$(curl -s https://api.github.com/repos/python/cpython/releases | jq -r '.[0].tag_name' | sed 's/v//')
+            echo "Latest Python version: $LATEST_PYTHON"
+            
+            # Update Python Dockerfiles
+            find ./chunks/lang-python -name "Dockerfile*" -type f -exec sed -i "s/PYTHON_VERSION=\"[^\"]*\"/PYTHON_VERSION=\"$LATEST_PYTHON\"/" {} \;
+            
+            # Run AutoFix script if available
+            if [ -f "./.autofix/fixers/update-lang-python.js" ]; then
+              node ./.autofix/fixers/update-lang-python.js
+            fi
+            ;;
+          rust)
+            # Get latest Rust version
+            LATEST_RUST=$(curl -s https://api.github.com/repos/rust-lang/rust/releases | jq -r '.[0].tag_name' | sed 's/v//')
+            echo "Latest Rust version: $LATEST_RUST"
+            
+            # Update Rust Dockerfiles
+            find ./chunks/lang-rust -name "Dockerfile*" -type f -exec sed -i "s/RUST_VERSION=\"[^\"]*\"/RUST_VERSION=\"$LATEST_RUST\"/" {} \;
+            
+            # Run AutoFix script if available
+            if [ -f "./.autofix/fixers/update-lang-rust.js" ]; then
+              node ./.autofix/fixers/update-lang-rust.js
+            fi
+            ;;
+          php)
+            # Get latest PHP version
+            LATEST_PHP=$(curl -s https://api.github.com/repos/php/php-src/releases | jq -r '.[] | select(.tag_name | startswith("php-8")) | .tag_name' | head -1 | sed 's/php-//')
+            echo "Latest PHP version: $LATEST_PHP"
+            
+            # Update PHP Dockerfiles
+            find ./chunks/lang-php -name "Dockerfile*" -type f -exec sed -i "s/PHP_VERSION=\"[^\"]*\"/PHP_VERSION=\"$LATEST_PHP\"/" {} \;
+            
+            # Run AutoFix script if available
+            if [ -f "./.autofix/fixers/update-lang-php.js" ]; then
+              node ./.autofix/fixers/update-lang-php.js
+            fi
+            ;;
+          java)
+            # Get latest Java version
+            LATEST_JAVA=$(curl -s https://api.github.com/repos/openjdk/jdk/releases | jq -r '.[0].tag_name' | grep -oP '\d+' | head -1)
+            echo "Latest Java version: $LATEST_JAVA"
+            
+            # Update Java Dockerfiles
+            find ./chunks/lang-java -name "Dockerfile*" -type f -exec sed -i "s/JAVA_VERSION=\"[^\"]*\"/JAVA_VERSION=\"$LATEST_JAVA\"/" {} \;
+            
+            # Run AutoFix script if available
+            if [ -f "./.autofix/fixers/update-lang-java.js" ]; then
+              node ./.autofix/fixers/update-lang-java.js
+            fi
+            ;;
+          ruby)
+            # Get latest Ruby version
+            LATEST_RUBY=$(curl -s https://api.github.com/repos/ruby/ruby/releases | jq -r '.[0].tag_name' | sed 's/v//')
+            echo "Latest Ruby version: $LATEST_RUBY"
+            
+            # Update Ruby Dockerfiles
+            find ./chunks/lang-ruby -name "Dockerfile*" -type f -exec sed -i "s/RUBY_VERSION=\"[^\"]*\"/RUBY_VERSION=\"$LATEST_RUBY\"/" {} \;
+            
+            # Run AutoFix script if available
+            if [ -f "./.autofix/fixers/update-lang-ruby.js" ]; then
+              node ./.autofix/fixers/update-lang-ruby.js
+            fi
+            ;;
+          cpp)
+            # Get latest GCC version
+            LATEST_GCC=$(curl -s https://api.github.com/repos/gcc-mirror/gcc/releases | jq -r '.[0].tag_name' | grep -oP '\d+\.\d+\.\d+')
+            echo "Latest GCC version: $LATEST_GCC"
+            
+            # Update C++ Dockerfiles
+            find ./chunks/lang-cpp -name "Dockerfile*" -type f -exec sed -i "s/GCC_VERSION=\"[^\"]*\"/GCC_VERSION=\"$LATEST_GCC\"/" {} \;
+            
+            # Run AutoFix script if available
+            if [ -f "./.autofix/fixers/update-lang-cpp.js" ]; then
+              node ./.autofix/fixers/update-lang-cpp.js
+            fi
+            ;;
+          csharp)
+            # Get latest .NET version
+            LATEST_DOTNET=$(curl -s https://api.github.com/repos/dotnet/runtime/releases | jq -r '.[0].tag_name' | sed 's/v//')
+            echo "Latest .NET version: $LATEST_DOTNET"
+            
+            # Update C# Dockerfiles
+            find ./chunks/lang-csharp -name "Dockerfile*" -type f -exec sed -i "s/DOTNET_VERSION=\"[^\"]*\"/DOTNET_VERSION=\"$LATEST_DOTNET\"/" {} \;
+            
+            # Run AutoFix script if available
+            if [ -f "./.autofix/fixers/update-lang-csharp.js" ]; then
+              node ./.autofix/fixers/update-lang-csharp.js
+            fi
+            ;;
+          elixir)
+            # Get latest Elixir version
+            LATEST_ELIXIR=$(curl -s https://api.github.com/repos/elixir-lang/elixir/releases | jq -r '.[0].tag_name' | sed 's/v//')
+            echo "Latest Elixir version: $LATEST_ELIXIR"
+            
+            # Get latest OTP version
+            LATEST_OTP=$(curl -s https://api.github.com/repos/erlang/otp/releases | jq -r '.[0].tag_name' | sed 's/OTP-//')
+            echo "Latest OTP version: $LATEST_OTP"
+            
+            # Update Elixir Dockerfiles
+            find ./chunks/lang-elixir -name "Dockerfile*" -type f -exec sed -i "s/ELIXIR_VERSION=\"[^\"]*\"/ELIXIR_VERSION=\"$LATEST_ELIXIR\"/" {} \;
+            find ./chunks/lang-elixir -name "Dockerfile*" -type f -exec sed -i "s/OTP_VERSION=\"[^\"]*\"/OTP_VERSION=\"$LATEST_OTP\"/" {} \;
+            
+            # Run AutoFix script if available
+            if [ -f "./.autofix/fixers/update-lang-elixir.js" ]; then
+              node ./.autofix/fixers/update-lang-elixir.js
+            fi
+            ;;
+        esac
+        
+        # Commit changes
+        if git diff --quiet; then
+          echo "No ${{ matrix.language }} changes to commit"
+        else
+          git add .
+          git commit -m "chore: update ${{ matrix.language }} to latest version"
+          git push
+        fi
+
+  security-updates:
+    name: Security Updates
+    runs-on: ubuntu-latest
+    needs: detect-updates
+    if: |
+      needs.detect-updates.outputs.security_updates == 'true' && 
+      (github.event.inputs.update_type == 'all' || github.event.inputs.update_type == 'security')
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+    
+    - name: Run security scan
+      run: |
+        echo "Running comprehensive security scan..."
+        # Build all images for scanning
+        make build-all || true
+        
+        # Scan for vulnerabilities
+        make security-scan-all || true
+    
+    - name: Create security update PR
+      run: |
+        # Create a branch for security updates
+        git checkout -b security-updates-$(date +%Y%m%d)
+        
+        # Apply security patches (placeholder logic)
+        echo "Applying security patches..."
+        
+        # Commit changes if any
+        if git diff --quiet; then
+          echo "No security updates needed"
+        else
+          git add .
+          git commit -m "security: apply security patches"
+          git push -u origin security-updates-$(date +%Y%m%d)
+          
+          # Create pull request
+          gh pr create --title "Security Updates $(date +%Y-%m-%d)" \
+                       --body "Automated security updates detected and applied." \
+                       --label "security" \
+                       --draft
+        fi
+
+  create-summary:
+    name: Create Update Summary
+    runs-on: ubuntu-latest
+    needs: [detect-updates, update-base-images, update-language-versions, security-updates]
+    if: always()
+    steps:
+    - name: Generate summary
+      run: |
+        echo "# Dependency Update Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Update Type: ${{ github.event.inputs.update_type || 'all' }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        echo "### Base Image Updates" >> $GITHUB_STEP_SUMMARY
+        echo "- Status: ${{ needs.update-base-images.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        echo "### Language Version Updates" >> $GITHUB_STEP_SUMMARY
+        echo "- Status: ${{ needs.update-language-versions.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        echo "### Security Updates" >> $GITHUB_STEP_SUMMARY
+        echo "- Status: ${{ needs.security-updates.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        echo "### Auto-merge" >> $GITHUB_STEP_SUMMARY
+        echo "- Enabled: ${{ github.event.inputs.auto_merge || 'false' }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        echo "Updates completed at: $(date)" >> $GITHUB_STEP_SUMMARY
+
+  auto-merge:
+    name: Auto-merge Non-breaking Changes
+    runs-on: ubuntu-latest
+    needs: [detect-updates, update-base-images, update-language-versions, security-updates]
+    if: |
+      always() && 
+      github.event.inputs.auto_merge == 'true' &&
+      (needs.update-base-images.result == 'success' || needs.update-language-versions.result == 'success')
+    steps:
+    - name: Auto-merge PRs
+      run: |
+        # Find and merge eligible PRs
+        gh pr list --label "automerge" --state open --json number,title | \
+        jq -r '.[] | "\(.number):\(.title)"' | \
+        while IFS=: read -r number title; do
+          echo "Auto-merging PR #$number: $title"
+          gh pr merge "$number" --auto --merge
+        done

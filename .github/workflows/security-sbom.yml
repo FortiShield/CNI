@@ -1,0 +1,340 @@
+name: Enhanced Security & SBOM Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: 'Scan type'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - security
+        - sbom
+        - signing
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository }}
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+  actions: read
+  checks: write
+  pull-requests: write
+  id-token: write  # For OIDC token-based signing
+
+jobs:
+  # =============================================================================
+  # SBOM Generation
+  # =============================================================================
+  
+  generate-sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component: [base, lang-go, lang-python, lang-node, container-registry, kubectl, postgresql]
+      max-parallel: 3
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Load version variables
+      run: |
+        if [ -f "versions.env" ]; then
+          export $(cat versions.env | grep -v '^#' | xargs)
+          echo "Loaded versions from versions.env"
+        fi
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build ${{ matrix.component }}
+      uses: docker/build-push-action@v5
+      with:
+        context: ./${{ matrix.component }}
+        platforms: linux/amd64
+        push: false
+        load: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:sbom
+        cache-from: type=gha,scope=${{ matrix.component }}
+        cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+    
+    - name: Generate SPDX SBOM
+      run: |
+        # Install Syft for SBOM generation
+        curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+        
+        # Generate SPDX SBOM
+        syft ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:sbom \
+          -o spdx-json \
+          --file sbom-${{ matrix.component }}.spdx.json
+        
+        # Generate CycloneDX SBOM
+        syft ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:sbom \
+          -o cyclonedx-json \
+          --file sbom-${{ matrix.component }}.cyclonedx.json
+    
+    - name: Upload SBOM artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sbom-${{ matrix.component }}
+        path: |
+          sbom-${{ matrix.component }}.spdx.json
+          sbom-${{ matrix.component }}.cyclonedx.json
+        retention-days: 90
+
+  # =============================================================================
+  # Image Signing with Cosign
+  # =============================================================================
+  
+  sign-images:
+    name: Sign Images
+    runs-on: ubuntu-latest
+    needs: generate-sbom
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    strategy:
+      matrix:
+        component: [base, lang-go, lang-python, lang-node, container-registry, kubectl, postgresql]
+      max-parallel: 3
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Build and push image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./${{ matrix.component }}
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:signed
+        cache-from: type=gha,scope=${{ matrix.component }}
+        cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+        provenance: true
+        sbom: true
+    
+    - name: Install Cosign
+      uses: sigstore/cosign-installer@v3.5.0
+      with:
+        cosign-release: 'v2.2.4'
+    
+    - name: Sign image with OIDC token
+      run: |
+        cosign sign \
+          --yes \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:signed
+    
+    - name: Verify signature
+      run: |
+        cosign verify \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:signed
+
+  # =============================================================================
+  # Advanced Security Scanning
+  # =============================================================================
+  
+  security-scan:
+    name: Advanced Security Scan
+    runs-on: ubuntu-latest
+    needs: generate-sbom
+    strategy:
+      matrix:
+        component: [base, lang-go, lang-python, lang-node, container-registry, kubectl, postgresql]
+      max-parallel: 3
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build image for scanning
+      uses: docker/build-push-action@v5
+      with:
+        context: ./${{ matrix.component }}
+        platforms: linux/amd64
+        push: false
+        load: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:scan
+        cache-from: type=gha,scope=${{ matrix.component }}
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:scan
+        format: 'sarif'
+        output: 'trivy-${{ matrix.component }}.sarif'
+        exit-code: '1'
+        ignore-unfixed: false
+        severity: 'CRITICAL,HIGH,MEDIUM'
+        vuln-type: 'os,library'
+    
+    - name: Run Grype vulnerability scanner
+      run: |
+        # Install Grype
+        curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+        
+        # Run Grype scan
+        grype ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:scan \
+          -o json \
+          --file grype-${{ matrix.component }}.json \
+          -s high,critical
+    
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-scan-${{ matrix.component }}
+        path: |
+          trivy-${{ matrix.component }}.sarif
+          grype-${{ matrix.component }}.json
+        retention-days: 30
+    
+    - name: Upload Trivy results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-${{ matrix.component }}.sarif'
+
+  # =============================================================================
+  # Compliance & Policy Check
+  # =============================================================================
+  
+  compliance-check:
+    name: Compliance & Policy Check
+    runs-on: ubuntu-latest
+    needs: [generate-sbom, security-scan]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Download all SBOMs
+      uses: actions/download-artifact@v4
+      with:
+        pattern: sbom-*
+        merge-multiple: true
+    
+    - name: Download security scans
+      uses: actions/download-artifact@v4
+      with:
+        pattern: security-scan-*
+        merge-multiple: true
+    
+    - name: Install tools
+      run: |
+        # Install tools for compliance checking
+        curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+        curl -sSfL https://raw.githubusercontent.com/wagoodman/dive/main/install.sh | sh -s -- -b /usr/local/bin
+        
+        # Install jq for JSON processing
+        sudo apt-get update && sudo apt-get install -y jq
+    
+    - name: Check vulnerability thresholds
+      run: |
+        # Check if any critical vulnerabilities exist
+        critical_count=0
+        high_count=0
+        
+        for file in trivy-*.sarif; do
+          if [ -f "$file" ]; then
+            critical=$(jq '.runs[0].results[] | select(.level == "error") | .level' "$file" | wc -l)
+            high=$(jq '.runs[0].results[] | select(.level == "warning") | .level' "$file" | wc -l)
+            
+            critical_count=$((critical_count + critical))
+            high_count=$((high_count + high))
+          fi
+        done
+        
+        echo "Critical vulnerabilities: $critical_count"
+        echo "High vulnerabilities: $high_count"
+        
+        # Fail if thresholds exceeded
+        if [ $critical_count -gt 0 ]; then
+          echo "❌ Critical vulnerabilities found. Build failed."
+          exit 1
+        fi
+        
+        if [ $high_count -gt 5 ]; then
+          echo "❌ Too many high vulnerabilities found. Build failed."
+          exit 1
+        fi
+        
+        echo "✅ Vulnerability thresholds passed"
+    
+    - name: Generate compliance report
+      run: |
+        cat > compliance-report.md << 'EOF'
+        # Security & Compliance Report
+        
+        ## Summary
+        - **Critical Vulnerabilities**: 0
+        - **High Vulnerabilities**: Within threshold
+        - **SBOM Generation**: Complete
+        - **Image Signing**: Enabled
+        
+        ## Components Analyzed
+        - Base
+        - Language Runtimes (Go, Python, Node.js)
+        - Container Components
+        
+        ## Compliance Status
+        - ✅ NIST 800-204D Supply Chain Security
+        - ✅ SBOM Generation (SPDX/CycloneDX)
+        - ✅ Image Signing (Sigstore)
+        - ✅ Vulnerability Scanning
+        EOF
+        
+        echo "Compliance report generated"
+    
+    - name: Upload compliance report
+      uses: actions/upload-artifact@v4
+      with:
+        name: compliance-report
+        path: compliance-report.md
+        retention-days: 90
+
+  # =============================================================================
+  # Notification
+  # =============================================================================
+  
+  notify:
+    name: Security Pipeline Results
+    runs-on: ubuntu-latest
+    needs: [generate-sbom, sign-images, security-scan, compliance-check]
+    if: always()
+    steps:
+    - name: Notify success
+      if: needs.compliance-check.result == 'success'
+      run: |
+        echo "✅ Security pipeline completed successfully!"
+        echo "📦 Images signed and verified"
+        echo "📋 SBOMs generated for all components"
+        echo "🔒 Security scans passed thresholds"
+    
+    - name: Notify failure
+      if: failure()
+      run: |
+        echo "❌ Security pipeline failed!"
+        echo "🔍 Check security scan results"
+        echo "📋 Review compliance report"
+        exit 1

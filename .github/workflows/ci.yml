@@ -1,59 +1,175 @@
-name: CI/CD Pipeline
+name: CNI CI/CD Pipeline
 
 on:
   push:
     branches: [ main, develop ]
+    tags: [ 'v*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - base
+        - chunks
+        - containers
 
 env:
-  IMAGE_NAME: alpine-certificates
   REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository }}
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+# Global permissions
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+  actions: read
+  checks: write
+  pull-requests: write
 
 jobs:
-  lint:
-    name: Lint Dockerfile
+  # =============================================================================
+  # Validation and Quality Checks
+  # =============================================================================
+  
+  validate:
+    name: Validate Code
     runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.changes.outputs.should_build }}
+      changed_components: ${{ steps.changes.outputs.changed_components }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Detect changes
+      uses: dorny/paths-filter@v2
+      id: changes
+      with:
+        filters: |
+          base:
+            - 'alpine-certificates/**'
+            - 'base/**'
+            - 'git-base/**'
+            - 'cfssl-self-sign/**'
+          chunks:
+            - 'chunks/lang-*/**'
+          containers:
+            - 'container-registry/**'
+            - 'kubectl/**'
+            - 'postgresql/**'
+          dockerfile:
+            - '**/Dockerfile*'
+          makefile:
+            - 'Makefile'
+          workflows:
+            - '.github/workflows/**'
+    
+    - name: Determine build scope
+      run: |
+        if [[ "${{ github.event_name }}" == "schedule" ]]; then
+          echo "should_build=true" >> $GITHUB_OUTPUT
+          echo "changed_components=all" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          echo "should_build=true" >> $GITHUB_OUTPUT
+          echo "changed_components=${{ github.event.inputs.build_type }}" >> $GITHUB_OUTPUT
+        elif [[ "${{ steps.changes.outputs.base }}" == "true" || "${{ steps.changes.outputs.chunks }}" == "true" || "${{ steps.changes.outputs.containers }}" == "true" ]]; then
+          echo "should_build=true" >> $GITHUB_OUTPUT
+          
+          components=()
+          [[ "${{ steps.changes.outputs.base }}" == "true" ]] && components+=("base")
+          [[ "${{ steps.changes.outputs.chunks }}" == "true" ]] && components+=("chunks")
+          [[ "${{ steps.changes.outputs.containers }}" == "true" ]] && components+=("containers")
+          
+          echo "changed_components=$(IFS=,; echo "${components[*]}")" >> $GITHUB_OUTPUT
+        else
+          echo "should_build=false" >> $GITHUB_OUTPUT
+        fi
+
+  lint-dockerfiles:
+    name: Lint Dockerfiles
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.should_build == 'true'
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Lint Dockerfile
+    - name: Find all Dockerfiles
+      id: find-dockerfiles
+      run: |
+        dockerfiles=$(find . -name "Dockerfile*" -type f | tr '\n' ' ')
+        echo "dockerfiles=$dockerfiles" >> $GITHUB_OUTPUT
+    
+    - name: Lint with Hadolint
       uses: hadolint/hadolint-action@v3.1.0
       with:
-        dockerfile: alpine-certificates/Dockerfile
+        dockerfile: ${{ steps.find-dockerfiles.outputs.dockerfiles }}
         failure-threshold: warning
+        recursive: true
 
-  security-scan:
-    name: Security Scan
+  lint-makefile:
+    name: Lint Makefile
     runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.should_build == 'true' && needs.validate.outputs.changed_components == 'all'
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Build Docker image
+    - name: Check Makefile syntax
       run: |
-        docker build -t ${{ env.IMAGE_NAME }}:test ./alpine-certificates
+        make -n all || exit 1
+        make -n help || exit 1
+
+  security-scan-source:
+    name: Source Code Security Scan
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.should_build == 'true'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
     
-    - name: Run Trivy vulnerability scanner
+    - name: Run Trivy filesystem scan
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: ${{ env.IMAGE_NAME }}:test
+        scan-type: 'fs'
+        scan-ref: '.'
         format: 'sarif'
-        output: 'trivy-results.sarif'
+        output: 'trivy-fs-results.sarif'
     
-    - name: Upload Trivy scan results to GitHub Security tab
+    - name: Upload Trivy results
       uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
-        sarif_file: 'trivy-results.sarif'
+        sarif_file: 'trivy-fs-results.sarif'
 
-  test:
-    name: Test Container
+  # =============================================================================
+  # Unit Testing
+  # =============================================================================
+
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.should_build == 'true'
     strategy:
       matrix:
-        alpine-version: [3.18, 3.19, 3.20]
+        test-suite: [base, language, container]
+        max-parallel: 3
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -61,37 +177,324 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
     
-    - name: Build image
+    - name: Build required images for testing
       run: |
-        docker build \
-          --build-arg ALPINE_VERSION=${{ matrix.alpine-version }} \
-          -t ${{ env.IMAGE_NAME }}:test-alpine-${{ matrix.alpine-version }} \
-          ./alpine-certificates
-    
-    - name: Test container
-      run: |
-        docker run --rm ${{ env.IMAGE_NAME }}:test-alpine-${{ matrix.alpine-version }}
-    
-    - name: Test health check
-      run: |
-        docker run --rm --health-interval=5s --health-timeout=3s \
-          ${{ env.IMAGE_NAME }}:test-alpine-${{ matrix.alpine-version }} \
-          sleep 30
-    
-    - name: Test certificate bundle
-      run: |
-        docker run --rm \
-          -v ${{ github.workspace }}/test-certs:/etc/ssl/certs \
-          ${{ env.IMAGE_NAME }}:test-alpine-${{ matrix.alpine-version }}
+        # Build base images needed for testing
+        if [[ "${{ matrix.test-suite }}" == "base" || "${{ matrix.test-suite }}" == "all" ]]; then
+          echo "Building base components..."
+          for component in alpine-certificates base git-base cfssl-self-sign; do
+            echo "Building $component..."
+            docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$component:test ./$component || exit 1
+          done
+        fi
         
-        # Verify the bundle was created
-        test -f ${{ github.workspace }}/test-certs/ca-certificates.crt
+        # Build language chunks for language testing
+        if [[ "${{ matrix.test-suite }}" == "language" || "${{ matrix.test-suite }}" == "all" ]]; then
+          echo "Building language chunks..."
+          for chunk in lang-go lang-node lang-python lang-rust lang-php lang-java lang-ruby lang-cpp lang-csharp lang-elixir; do
+            echo "Building $chunk..."
+            docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$chunk:test ./chunks/$chunk || exit 1
+          done
+        fi
+        
+        # Build container components for container testing
+        if [[ "${{ matrix.test-suite }}" == "container" || "${{ matrix.test-suite }}" == "all" ]]; then
+          echo "Building container components..."
+          for component in container-registry kubectl postgresql; do
+            echo "Building $component..."
+            docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$component:test ./$component || exit 1
+          done
+        fi
+    
+    - name: Run unit tests
+      run: |
+        export REGISTRY="${{ env.REGISTRY }}"
+        export IMAGE_NAMESPACE="${{ env.IMAGE_NAMESPACE }}"
+        
+        # Make test scripts executable
+        chmod +x tests/*.sh
+        
+        case "${{ matrix.test-suite }}" in
+          base)
+            echo "Running base component tests..."
+            ./tests/base_tests.sh
+            ;;
+          language)
+            echo "Running language component tests..."
+            ./tests/language_tests.sh
+            ;;
+          container)
+            echo "Running container component tests..."
+            ./tests/container_tests.sh
+            ;;
+        esac
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.test-suite }}
+        path: /tmp/test-results/
+        retention-days: 30
+    
+    - name: Upload coverage reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-${{ matrix.test-suite }}
+        path: /tmp/test-results/coverage/
+        retention-days: 30
 
-  build-and-push:
-    name: Build and Push
+  integration-tests:
+    name: Integration Tests
     runs-on: ubuntu-latest
-    needs: [lint, security-scan, test]
-    if: github.ref == 'refs/heads/main'
+    needs: [validate, unit-tests]
+    if: needs.validate.outputs.should_build == 'true' && needs.unit-tests.result == 'success'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build all images for integration testing
+      run: |
+        export REGISTRY="${{ env.REGISTRY }}"
+        export IMAGE_NAMESPACE="${{ env.IMAGE_NAMESPACE }}"
+        
+        # Build all components
+        make build-all REGISTRY="$REGISTRY" IMAGE_TAG="integration-test"
+    
+    - name: Run integration tests
+      run: |
+        export REGISTRY="${{ env.REGISTRY }}"
+        export IMAGE_NAMESPACE="${{ env.IMAGE_NAMESPACE }}"
+        
+        # Make test scripts executable
+        chmod +x tests/*.sh
+        
+        echo "Running integration tests..."
+        ./tests/integration_tests.sh || exit 1
+    
+    - name: Upload integration test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: integration-test-results
+        path: /tmp/test-results/
+        retention-days: 30
+
+  # =============================================================================
+  # Build Matrix
+  # =============================================================================
+
+  build-base:
+    name: Build Base Components
+    runs-on: ubuntu-latest
+    needs: [validate, unit-tests, lint-dockerfiles]
+    if: needs.validate.outputs.should_build == 'true' && (needs.validate.outputs.changed_components == 'all' || needs.validate.outputs.changed_components == 'base')
+    strategy:
+      matrix:
+        component: [alpine-certificates, base, git-base, cfssl-self-sign]
+        include:
+          - component: alpine-certificates
+            context: ./alpine-certificates
+            platforms: linux/amd64,linux/arm64
+          - component: base
+            context: ./base
+            platforms: linux/amd64,linux/arm64
+          - component: git-base
+            context: ./git-base
+            platforms: linux/amd64,linux/arm64
+          - component: cfssl-self-sign
+            context: ./cfssl-self-sign
+            platforms: linux/amd64,linux/arm64
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build base component
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ matrix.context }}
+        platforms: ${{ matrix.platforms }}
+        push: false
+        load: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:test
+        cache-from: type=gha,scope=${{ matrix.component }}
+        cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+    
+    - name: Test base component
+      run: |
+        docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:test
+
+  build-chunks:
+    name: Build Language Chunks
+    runs-on: ubuntu-latest
+    needs: [validate, unit-tests, lint-dockerfiles]
+    if: needs.validate.outputs.should_build == 'true' && (needs.validate.outputs.changed_components == 'all' || needs.validate.outputs.changed_components == 'chunks')
+    strategy:
+      matrix:
+        chunk: [lang-go, lang-node, lang-python, lang-rust, lang-php, lang-java, lang-ruby, lang-cpp, lang-csharp, lang-elixir]
+        max-parallel: 4
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build language chunk
+      uses: docker/build-push-action@v5
+      with:
+        context: ./chunks/${{ matrix.chunk }}
+        platforms: linux/amd64,linux/arm64
+        push: false
+        load: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.chunk }}:test
+        cache-from: type=gha,scope=${{ matrix.chunk }}
+        cache-to: type=gha,mode=max,scope=${{ matrix.chunk }}
+    
+    - name: Test language chunk
+      run: |
+        # Test basic functionality
+        case "${{ matrix.chunk }}" in
+          lang-go)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.chunk }}:test go version
+            ;;
+          lang-node)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.chunk }}:test node --version
+            ;;
+          lang-python)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.chunk }}:test python --version
+            ;;
+          lang-rust)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.chunk }}:test rustc --version
+            ;;
+          lang-php)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.chunk }}:test php --version
+            ;;
+          lang-java)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.chunk }}:test java -version
+            ;;
+          lang-ruby)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.chunk }}:test ruby --version
+            ;;
+          lang-cpp)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.chunk }}:test gcc --version
+            ;;
+          lang-csharp)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.chunk }}:test dotnet --version
+            ;;
+          lang-elixir)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.chunk }}:test elixir --version
+            ;;
+        esac
+
+  build-containers:
+    name: Build Container Components
+    runs-on: ubuntu-latest
+    needs: [validate, unit-tests, lint-dockerfiles]
+    if: needs.validate.outputs.should_build == 'true' && (needs.validate.outputs.changed_components == 'all' || needs.validate.outputs.changed_components == 'containers')
+    strategy:
+      matrix:
+        component: [container-registry, kubectl, postgresql]
+        include:
+          - component: container-registry
+            context: ./container-registry
+            platforms: linux/amd64,linux/arm64
+          - component: kubectl
+            context: ./kubectl
+            platforms: linux/amd64,linux/arm64
+          - component: postgresql
+            context: ./postgresql
+            platforms: linux/amd64,linux/arm64
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build container component
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ matrix.context }}
+        platforms: ${{ matrix.platforms }}
+        push: false
+        load: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:test
+        cache-from: type=gha,scope=${{ matrix.component }}
+        cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+    
+    - name: Test container component
+      run: |
+        # Test basic functionality
+        case "${{ matrix.component }}" in
+          container-registry)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:test /bin/true
+            ;;
+          kubectl)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:test kubectl version --client
+            ;;
+          postgresql)
+            docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:test psql --version
+            ;;
+        esac
+
+  # =============================================================================
+  # Security Scanning
+  # =============================================================================
+
+  security-scan-images:
+    name: Security Scan Images
+    runs-on: ubuntu-latest
+    needs: [build-base, build-chunks, build-containers]
+    if: always() && (needs.build-base.result == 'success' || needs.build-chunks.result == 'success' || needs.build-containers.result == 'success')
+    strategy:
+      matrix:
+        component: [alpine-certificates, base, git-base, cfssl-self-sign, lang-go, lang-node, lang-python, lang-rust, lang-php, lang-java, lang-ruby, lang-cpp, lang-csharp, lang-elixir, container-registry, kubectl, postgresql]
+      max-parallel: 3
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}:test
+        format: 'sarif'
+        output: 'trivy-${{ matrix.component }}.sarif'
+        exit-code: '1'
+        ignore-unfixed: true
+        severity: 'CRITICAL,HIGH'
+    
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-${{ matrix.component }}.sarif'
+
+  # =============================================================================
+  # Publish
+  # =============================================================================
+
+  publish:
+    name: Publish Images
+    runs-on: ubuntu-latest
+    needs: [validate, build-base, build-chunks, build-containers, security-scan-images]
+    if: |
+      github.event_name == 'push' && 
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
+      needs.validate.outputs.should_build == 'true' &&
+      (needs.build-base.result == 'success' || needs.build-chunks.result == 'success' || needs.build-containers.result == 'success')
+    strategy:
+      matrix:
+        component: [alpine-certificates, base, git-base, cfssl-self-sign, lang-go, lang-node, lang-python, lang-rust, lang-php, lang-java, lang-ruby, lang-cpp, lang-csharp, lang-elixir, container-registry, kubectl, postgresql]
+      max-parallel: 4
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -110,65 +513,145 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ${{ env.REGISTRY }}/${{ github.repository }}
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.component }}
         tags: |
           type=ref,event=branch
           type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
           type=sha,prefix={{branch}}-
           type=raw,value=latest,enable={{is_default_branch}}
+    
+    - name: Determine context
+      id: context
+      run: |
+        case "${{ matrix.component }}" in
+          alpine-certificates|base|git-base|cfssl-self-sign|container-registry|kubectl|postgresql)
+            echo "context=./${{ matrix.component }}" >> $GITHUB_OUTPUT
+            ;;
+          lang-*)
+            echo "context=./chunks/${{ matrix.component }}" >> $GITHUB_OUTPUT
+            ;;
+        esac
     
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
-        context: ./alpine-certificates
+        context: ${{ steps.context.outputs.context }}
+        platforms: linux/amd64,linux/arm64
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        platforms: linux/amd64,linux/arm64
+        cache-from: type=gha,scope=${{ matrix.component }}
+        cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+        provenance: true
+        sbom: true
+
+  # =============================================================================
+  # Release
+  # =============================================================================
 
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: build-and-push
-    if: github.ref == 'refs/heads/main'
+    needs: [validate, publish]
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
     
-    - name: Get version
-      id: version
+    - name: Generate changelog
+      id: changelog
       run: |
-        # Extract version from git tag or use timestamp
-        if [ -n "$(git describe --tags --exact-match 2>/dev/null)" ]; then
-          VERSION=$(git describe --tags --exact-match)
+        # Get previous tag
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        
+        # Generate changelog
+        if [ -n "$PREV_TAG" ]; then
+          CHANGELOG=$(git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD)
         else
-          VERSION=$(date +%Y.%m.%d-%H%M%S)
+          CHANGELOG=$(git log --pretty=format:"- %s (%h)")
         fi
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
     
     - name: Create Release
-      uses: actions/create-release@v1
+      uses: softprops/action-gh-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: v${{ steps.version.outputs.version }}
-        release_name: Release v${{ steps.version.outputs.version }}
+        body: |
+          ## Release ${{ github.ref_name }}
+          
+          ${{ steps.changelog.outputs.changelog }}
+          
+          ### Docker Images
+          
+          ```bash
+          # Base components
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/alpine-certificates:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/base:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/git-base:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/cfssl-self-sign:latest
+          
+          # Language chunks
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/lang-go:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/lang-node:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/lang-python:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/lang-rust:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/lang-php:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/lang-java:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/lang-ruby:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/lang-cpp:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/lang-csharp:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/lang-elixir:latest
+          
+          # Container components
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/container-registry:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/kubectl:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/postgresql:latest
+          ```
+          
+          ### Quick Start
+          
+          ```bash
+          # Build all components
+          make build-all
+          
+          # Test specific component
+          make test-component COMPONENT=lang-go
+          
+          # Security scan
+          make security-scan-all
+          ```
+        generate_release_notes: true
         draft: false
         prerelease: false
-        body: |
-          ## Changes in v${{ steps.version.outputs.version }}
-          
-          - Updated to latest Alpine Linux version
-          - Enhanced security with non-root user
-          - Improved error handling and logging
-          - Added health checks
-          - Optimized Docker build process
-          
-          ## Docker Image
-          ```bash
-          docker pull ${{ env.REGISTRY }}/${{ github.repository }}:latest
-          ```
+
+  # =============================================================================
+  # Notification
+  # =============================================================================
+
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [validate, lint-dockerfiles, build-base, build-chunks, build-containers, security-scan-images, publish, release]
+    if: always()
+    steps:
+    - name: Notify success
+      if: needs.publish.result == 'success'
+      run: |
+        echo "✅ CI/CD Pipeline completed successfully!"
+        echo "📦 Images published to ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}"
+    
+    - name: Notify failure
+      if: failure()
+      run: |
+        echo "❌ CI/CD Pipeline failed!"
+        echo "🔍 Check the job logs for details"
+        exit 1

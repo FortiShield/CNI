@@ -1,0 +1,14 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ARG NODE_VERSION=12.16.1
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && curl -L https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz -o node-${NODE_VERSION}.tar.gz \
+    && tar -xzf node-${NODE_VERSION}.tar.gz \
+    && mkdir -p /usr/local/node \
+    && mv node-v${NODE_VERSION}-linux-x64/* /usr/local/node/ \
+    && cp -R --parents /usr/local/node /assets

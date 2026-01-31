@@ -1,0 +1,36 @@
+version: 0.1
+log:
+  level: info
+  fields:
+    service: registry
+    environment: production
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete:
+    enabled: true
+  cache:
+    blobdescriptor: inmemory
+http:
+  addr: :5000
+  headers:
+    X-Content-Type-Options: [nosniff]
+  debug:
+    addr: :5001
+    prometheus:
+      enabled: true
+      path: /metrics
+auth:
+  htpasswd:
+    realm: basic-realm
+    path: /etc/docker/registry/htpasswd
+notifications:
+  endpoints:
+    - name: local
+      url: http://localhost:5001/callback
+      headers:
+        Authorization: [Bearer <your_token>]
+      timeout: 500ms
+      threshold: 5
+      backoff: 1s
+      disabled: true

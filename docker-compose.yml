@@ -1,0 +1,274 @@
+version: '3.8'
+
+services:
+  # Container Registry Service
+  container-registry:
+    build:
+      context: ./container-registry
+      dockerfile: Dockerfile
+    container_name: cni-registry
+    ports:
+      - "5000:5000"
+      - "5001:5001"  # Debug endpoint
+    volumes:
+      - registry_data:/var/lib/registry
+      - ./container-registry/config.yml:/etc/docker/registry/config.yml:ro
+      - ./container-registry/scripts:/scripts:ro
+    environment:
+      - REGISTRY_LOG_LEVEL=info
+      - REGISTRY_HTTP_ADDR=0.0.0.0:5000
+      - CONTAINER_REGISTRY_LISTEN_PORT=5000
+    networks:
+      - cni-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/scripts/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Git Base Service
+  git-base:
+    build:
+      context: ./git-base
+      dockerfile: Dockerfile
+    container_name: cni-git
+    ports:
+      - "2222:22"  # SSH for Git operations
+    volumes:
+      - git_data:/home/gituser
+      - git_ssh_keys:/home/gituser/.ssh
+      - git_config:/home/gituser/.gitconfig
+    environment:
+      - GIT_USER_UID=65534
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+    networks:
+      - cni-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "git", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # PostgreSQL Service
+  postgresql:
+    build:
+      context: ./postgresql
+      dockerfile: Dockerfile
+    container_name: cni-postgresql
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgresql/init:/docker-entrypoint-initdb.d:ro
+    environment:
+      - POSTGRES_DB=cni
+      - POSTGRES_USER=cniuser
+      - POSTGRES_PASSWORD=cnipassword
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    networks:
+      - cni-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cniuser -d cni"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Nginx Service (for tool-chrome)
+  nginx:
+    build:
+      context: ./chunks/tool-nginx
+      dockerfile: Dockerfile
+    container_name: cni-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - nginx_config:/usr/local/nginx/conf
+      - nginx_logs:/usr/local/nginx/logs
+      - nginx_html:/usr/local/nginx/html
+    networks:
+      - cni-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # MySQL Service (for tool-mysql)
+  mysql:
+    build:
+      context: ./chunks/tool-mysql
+      dockerfile: Dockerfile
+    container_name: cni-mysql
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/usr/local/mysql/data
+      - mysql_config:/usr/local/mysql/etc
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=cni
+      - MYSQL_USER=cniuser
+      - MYSQL_PASSWORD=cnipassword
+    networks:
+      - cni-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "cniuser", "-pcnipassword"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Development Services (Language Chunks)
+  lang-python:
+    build:
+      context: ./chunks/lang-python
+      dockerfile: Dockerfile
+    container_name: cni-lang-python
+    volumes:
+      - python_workspace:/workspace
+      - shared_code:/shared/code
+    environment:
+      - PYTHON_VERSION=3.7.3
+      - LANG=C.UTF-8
+    networks:
+      - cni-network
+    profiles:
+      - development
+    command: ["python", "--version"]
+
+  lang-go:
+    build:
+      context: ./chunks/lang-go
+      dockerfile: Dockerfile
+    container_name: cni-lang-go
+    volumes:
+      - go_workspace:/workspace
+      - shared_code:/shared/code
+    environment:
+      - GO_VERSION=1.14.1
+      - GOPATH=/workspace/go
+      - LANG=C.UTF-8
+    networks:
+      - cni-network
+    profiles:
+      - development
+    command: ["go", "version"]
+
+  lang-node:
+    build:
+      context: ./chunks/lang-node
+      dockerfile: Dockerfile
+    container_name: cni-lang-node
+    volumes:
+      - node_workspace:/workspace
+      - shared_code:/shared/code
+    environment:
+      - NODE_VERSION=12.16.1
+      - LANG=C.UTF-8
+    networks:
+      - cni-network
+    profiles:
+      - development
+    command: ["node", "--version"]
+
+  # Tool Services
+  tool-docker:
+    build:
+      context: ./chunks/tool-docker
+      dockerfile: Dockerfile
+    container_name: cni-tool-docker
+    volumes:
+      - docker_socket:/var/run/docker.sock
+      - docker_config:/root/.docker
+    environment:
+      - DOCKER_VERSION=19.03.8
+      - LANG=C.UTF-8
+    networks:
+      - cni-network
+    profiles:
+      - tools
+    privileged: true
+    command: ["docker", "--version"]
+
+  tool-chrome:
+    build:
+      context: ./chunks/tool-chrome
+      dockerfile: Dockerfile
+    container_name: cni-tool-chrome
+    volumes:
+      - chrome_data:/data
+      - chrome_downloads:/downloads
+    environment:
+      - CHROME_VERSION=81.0.4044.113
+      - DISPLAY=:99
+    networks:
+      - cni-network
+    profiles:
+      - tools
+    shm_size: 2g
+    command: ["google-chrome", "--headless", "--no-sandbox", "--disable-gpu"]
+
+# Networks
+networks:
+  cni-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Volumes
+volumes:
+  # Data volumes
+  registry_data:
+    driver: local
+  git_data:
+    driver: local
+  postgres_data:
+    driver: local
+  mysql_data:
+    driver: local
+  nginx_config:
+    driver: local
+  nginx_logs:
+    driver: local
+  nginx_html:
+    driver: local
+  
+  # Configuration volumes
+  git_ssh_keys:
+    driver: local
+  git_config:
+    driver: local
+  mysql_config:
+    driver: local
+  docker_config:
+    driver: local
+  
+  # Development volumes
+  python_workspace:
+    driver: local
+  go_workspace:
+    driver: local
+  node_workspace:
+    driver: local
+  shared_code:
+    driver: local
+  
+  # Tool volumes
+  chrome_data:
+    driver: local
+  chrome_downloads:
+    driver: local
+  docker_socket:
+    driver: local

@@ -1,0 +1,41 @@
+# UBI8 build stage for creating assets
+ARG BUILD_IMAGE=registry.access.redhat.com/ubi8/ubi-minimal:latest
+
+FROM ${BUILD_IMAGE}
+
+# System configuration
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+# Install build dependencies
+RUN microdnf update -y && \
+    microdnf install -y \
+        # Core utilities
+        curl \
+        wget \
+        tar \
+        gzip \
+        bzip2 \
+        xz \
+        unzip \
+        zip \
+        # Build tools
+        gcc \
+        gcc-c++ \
+        make \
+        cmake \
+        pkgconfig \
+        # Development tools
+        git \
+        openssl \
+        # System utilities
+        procps-ng \
+        && microdnf clean all
+
+# Create assets directory for copying built components
+RUN mkdir -p /assets
+
+# Set working directory
+WORKDIR /build
+
+# Default command for build stage
+CMD ["/bin/bash"]

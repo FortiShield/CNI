@@ -1,0 +1,312 @@
+name: Promote Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_registry:
+        description: 'Target registry to promote images to'
+        required: true
+        default: 'docker.io'
+        type: string
+      target_namespace:
+        description: 'Target namespace/organization'
+        required: true
+        default: 'cni-project'
+        type: string
+      dry_run:
+        description: 'Dry run (only show what would be promoted)'
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    # Run promotion daily at 3 AM UTC
+    - cron: '0 3 * * *'
+
+env:
+  SOURCE_REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository }}
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  # =============================================================================
+  # Discover Date-Stamped Images
+  # =============================================================================
+
+  discover-images:
+    name: Discover Date-Stamped Images
+    runs-on: ubuntu-latest
+    outputs:
+      images_to_promote: ${{ steps.discover.outputs.images }}
+      promotion_count: ${{ steps.discover.outputs.count }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker CLI
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to source registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.SOURCE_REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Discover date-stamped images
+      id: discover
+      run: |
+        echo "🔍 Discovering images with date timestamp tags..."
+        
+        # Get current year and month for regex
+        CURRENT_YEAR=$(date +%Y)
+        CURRENT_MONTH=$(date +%m)
+        
+        echo "Looking for tags matching pattern: ${CURRENT_YEAR}-${CURRENT_MONTH}*"
+        
+        # List all components from Makefile
+        BASE_COMPONENTS="alpine-certificates base git-base cfssl-self-sign container-registry kubectl postgresql"
+        LANG_CHUNKS="lang-go lang-node lang-python lang-rust lang-php lang-java lang-ruby lang-cpp lang-csharp lang-elixir"
+        
+        IMAGES_TO_PROMOTE=""
+        COUNT=0
+        
+        # Check base components
+        for component in $BASE_COMPONENTS; do
+          echo "Checking base component: $component"
+          
+          # Get all tags for this component
+          TAGS=$(docker buildx imagetools inspect ${{ env.SOURCE_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$component 2>/dev/null | grep -oP '(?<=Name: )[^[:space:]]*' | grep -E "^${CURRENT_YEAR}-${CURRENT_MONTH}" || true)
+          
+          if [ -n "$TAGS" ]; then
+            echo "  Found date-stamped tags: $TAGS"
+            for tag in $TAGS; do
+              if [ -z "$IMAGES_TO_PROMOTE" ]; then
+                IMAGES_TO_PROMOTE="${component}:${tag}"
+              else
+                IMAGES_TO_PROMOTE="${IMAGES_TO_PROMOTE},${component}:${tag}"
+              fi
+              COUNT=$((COUNT + 1))
+              echo "    → Will promote $component:$tag"
+            done
+          else
+            echo "  No date-stamped tags found"
+          fi
+        done
+        
+        # Check language chunks
+        for chunk in $LANG_CHUNKS; do
+          echo "Checking language chunk: $chunk"
+          
+          # Get all tags for this chunk
+          TAGS=$(docker buildx imagetools inspect ${{ env.SOURCE_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/$chunk 2>/dev/null | grep -oP '(?<=Name: )[^[:space:]]*' | grep -E "^${CURRENT_YEAR}-${CURRENT_MONTH}" || true)
+          
+          if [ -n "$TAGS" ]; then
+            echo "  Found date-stamped tags: $TAGS"
+            for tag in $TAGS; do
+              if [ -z "$IMAGES_TO_PROMOTE" ]; then
+                IMAGES_TO_PROMOTE="${chunk}:${tag}"
+              else
+                IMAGES_TO_PROMOTE="${IMAGES_TO_PROMOTE},${chunk}:${tag}"
+              fi
+              COUNT=$((COUNT + 1))
+              echo "    → Will promote $chunk:$tag"
+            done
+          else
+            echo "  No date-stamped tags found"
+          fi
+        done
+        
+        echo "images=$IMAGES_TO_PROMOTE" >> $GITHUB_OUTPUT
+        echo "count=$COUNT" >> $GITHUB_OUTPUT
+        
+        echo ""
+        echo "📊 Summary:"
+        echo "  Total images to promote: $COUNT"
+        echo "  Images: $IMAGES_TO_PROMOTE"
+        
+        if [ $COUNT -eq 0 ]; then
+          echo "⚠️ No date-stamped images found for promotion"
+        else
+          echo "✅ Found $COUNT images with date-stamped tags"
+        fi
+
+  # =============================================================================
+  # Promote Images
+  # =============================================================================
+
+  promote-images:
+    name: Promote Images
+    runs-on: ubuntu-latest
+    needs: discover-images
+    if: needs.discover-images.outputs.promotion_count > 0
+    strategy:
+      matrix:
+        image: ${{ fromJson(needs.discover-images.outputs.images_to_promote) }}
+      max-parallel: 4
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker CLI
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Parse image info
+      id: parse
+      run: |
+        # Split image:tag into components
+        IMAGE_NAME=$(echo "${{ matrix.image }}" | cut -d':' -f1)
+        TAG=$(echo "${{ matrix.image }}" | cut -d':' -f2)
+        
+        echo "image-name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+        
+        # Determine source context for building
+        case "$IMAGE_NAME" in
+          alpine-certificates|base|git-base|cfssl-self-sign|container-registry|kubectl|postgresql)
+            echo "context=./$IMAGE_NAME" >> $GITHUB_OUTPUT
+            ;;
+          lang-*)
+            echo "context=./chunks/$IMAGE_NAME" >> $GITHUB_OUTPUT
+            ;;
+        esac
+        
+        echo "📦 Processing: $IMAGE_NAME:$TAG"
+        echo "  Context: ${{ steps.parse.outputs.context }}"
+    
+    - name: Log in to source registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.SOURCE_REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Log in to target registry
+      if: github.event.inputs.dry_run != 'true'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ github.event.inputs.target_registry || 'docker.io' }}
+        username: ${{ secrets.DOCKER_USERNAME || github.actor }}
+        password: ${{ secrets.DOCKER_PASSWORD || secrets.GITHUB_TOKEN }}
+    
+    - name: Pull source image
+      run: |
+        echo "📥 Pulling source image: ${{ env.SOURCE_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ steps.parse.outputs.image-name }}:${{ steps.parse.outputs.tag }}"
+        docker pull ${{ env.SOURCE_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ steps.parse.outputs.image-name }}:${{ steps.parse.outputs.tag }}
+    
+    - name: Tag for target registry
+      run: |
+        TARGET_REGISTRY="${{ github.event.inputs.target_registry || 'docker.io' }}"
+        TARGET_NAMESPACE="${{ github.event.inputs.target_namespace || 'cni-project' }}"
+        
+        SOURCE_IMAGE="${{ env.SOURCE_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ steps.parse.outputs.image-name }}:${{ steps.parse.outputs.tag }}"
+        TARGET_IMAGE="$TARGET_REGISTRY/$TARGET_NAMESPACE/${{ steps.parse.outputs.image-name }}:${{ steps.parse.outputs.tag }}"
+        
+        echo "🏷️  Tagging image:"
+        echo "  Source:  $SOURCE_IMAGE"
+        echo "  Target:  $TARGET_IMAGE"
+        
+        docker tag $SOURCE_IMAGE $TARGET_IMAGE
+        
+        # Also tag as latest if this is the newest date-stamped tag
+        LATEST_TAG="$TARGET_REGISTRY/$TARGET_NAMESPACE/${{ steps.parse.outputs.image-name }}:latest"
+        echo "  Latest:  $LATEST_TAG"
+        docker tag $SOURCE_IMAGE $LATEST_TAG
+        
+        echo "target-image=$TARGET_IMAGE" >> $GITHUB_OUTPUT
+        echo "latest-image=$LATEST_TAG" >> $GITHUB_OUTPUT
+    
+    - name: Push to target registry
+      if: github.event.inputs.dry_run != 'true'
+      run: |
+        TARGET_IMAGE="${{ steps.tag.outputs.target-image }}"
+        LATEST_IMAGE="${{ steps.tag.outputs.latest-image }}"
+        
+        echo "📤 Pushing to target registry..."
+        echo "  Pushing: $TARGET_IMAGE"
+        docker push $TARGET_IMAGE
+        
+        echo "  Pushing: $LATEST_IMAGE"
+        docker push $LATEST_IMAGE
+        
+        echo "✅ Successfully promoted ${{ steps.parse.outputs.image-name }}:${{ steps.parse.outputs.tag }}"
+    
+    - name: Dry run output
+      if: github.event.inputs.dry_run == 'true'
+      run: |
+        TARGET_IMAGE="${{ steps.tag.outputs.target-image }}"
+        LATEST_IMAGE="${{ steps.tag.outputs.latest-image }}"
+        
+        echo "🔍 DRY RUN - Would push:"
+        echo "  Target:  $TARGET_IMAGE"
+        echo "  Latest:  $LATEST_IMAGE"
+        echo ""
+        echo "💡 To actually promote, run workflow without dry_run flag"
+
+  # =============================================================================
+  # Summary and Notification
+  # =============================================================================
+
+  promotion-summary:
+    name: Promotion Summary
+    runs-on: ubuntu-latest
+    needs: [discover-images, promote-images]
+    if: always()
+    steps:
+    - name: Generate summary
+      run: |
+        echo ""
+        echo "🚀 Image Promotion Summary"
+        echo "========================="
+        echo ""
+        echo "📊 Statistics:"
+        echo "  Images discovered: ${{ needs.discover-images.outputs.promotion_count }}"
+        echo "  Target registry: ${{ github.event.inputs.target_registry || 'docker.io' }}"
+        echo "  Target namespace: ${{ github.event.inputs.target_namespace || 'cni-project' }}"
+        echo "  Dry run: ${{ github.event.inputs.dry_run || 'false' }}"
+        echo ""
+        
+        if [ "${{ needs.discover-images.outputs.promotion_count }}" -eq 0 ]; then
+          echo "⚠️ No date-stamped images found for promotion"
+          echo ""
+          echo "💡 Images are tagged with date stamps (YYYY-MM-DD format)"
+          echo "   Only images tagged with current year-month are promoted"
+        else
+          echo "✅ Promotion completed successfully!"
+          echo ""
+          echo "📦 Images promoted:"
+          IFS=',' read -ra IMAGES <<< "${{ needs.discover-images.outputs.images_to_promote }}"
+          for image in "${IMAGES[@]}"; do
+            echo "  • $image"
+          done
+        fi
+        
+        echo ""
+        echo "🔄 Next steps:"
+        echo "  • Verify images in target registry"
+        echo "  • Update deployment configurations"
+        echo "  • Test promoted images"
+        
+        if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
+          echo ""
+          echo "💡 This was a dry run. No images were actually promoted."
+          echo "   Run again without dry_run flag to perform actual promotion."
+        fi
+
+  # =============================================================================
+  # Cleanup
+  # =============================================================================
+
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [discover-images, promote-images]
+    if: always()
+    steps:
+    - name: Cleanup Docker resources
+      run: |
+        echo "🧹 Cleaning up Docker resources..."
+        docker system prune -f
+        echo "✅ Cleanup completed"

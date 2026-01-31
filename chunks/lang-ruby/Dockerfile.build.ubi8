@@ -1,0 +1,16 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ARG RUBY_VERSION=2.7.0
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && curl -L https://cache.ruby-lang.org/pub/ruby/${RUBY_VERSION%.*}/ruby-${RUBY_VERSION}.tar.gz -o ruby-${RUBY_VERSION}.tar.gz \
+    && tar -xzf ruby-${RUBY_VERSION}.tar.gz \
+    && cd ruby-${RUBY_VERSION} \
+    && ./configure --prefix=/usr/local --enable-shared \
+    && make -j "$(nproc)" \
+    && make -j "$(nproc)" install \
+    && cp -R --parents /usr/local/{bin,lib,include} /assets

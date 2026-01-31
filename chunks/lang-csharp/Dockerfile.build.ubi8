@@ -1,0 +1,14 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ARG DOTNET_VERSION=3.1.3
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && curl -L https://download.visualstudio.microsoft.com/download/pr/8b8b348a-3d9a-4e4a-9b8c-8c8a6d8b8b8b/dotnet-sdk-${DOTNET_VERSION}-linux-x64.tar.gz -o dotnet-sdk.tar.gz \
+    && tar -xzf dotnet-sdk.tar.gz \
+    && mkdir -p /usr/local/dotnet \
+    && mv dotnet-sdk-*/* /usr/local/dotnet/ \
+    && cp -R --parents /usr/local/dotnet /assets

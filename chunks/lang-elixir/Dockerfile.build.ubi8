@@ -1,0 +1,21 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ARG ELIXIR_VERSION=1.9.4
+ARG OTP_VERSION=22.2
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && curl -L https://github.com/erlang/otp/archive/OTP-${OTP_VERSION}.tar.gz -o OTP-${OTP_VERSION}.tar.gz \
+    && tar -xzf OTP-${OTP_VERSION}.tar.gz \
+    && cd otp-OTP-${OTP_VERSION} \
+    && ./configure --prefix=/usr/local --enable-dirty-schedulers \
+    && make -j "$(nproc)" \
+    && make -j "$(nproc)" install \
+    && curl -L https://github.com/elixir-lang/elixir/archive/v${ELIXIR_VERSION}.tar.gz -o elixir-${ELIXIR_VERSION}.tar.gz \
+    && tar -xzf elixir-${ELIXIR_VERSION}.tar.gz \
+    && cd elixir-${ELIXIR_VERSION} \
+    && make install \
+    && cp -R --parents /usr/local/{bin,lib,include} /assets

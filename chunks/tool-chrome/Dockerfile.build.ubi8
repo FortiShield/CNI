@@ -1,0 +1,14 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ARG CHROME_VERSION=81.0.4044.113
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && curl -L https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_${CHROME_VERSION}-1_amd64.deb -o chrome.deb \
+    && dpkg-deb -x chrome.deb /tmp/chrome \
+    && mkdir -p /usr/local/bin /usr/local/lib \
+    && cp -R --parents /tmp/chrome/usr/bin/google-chrome /usr/local/bin/ \
+    && cp -R --parents /tmp/chrome/usr/lib/* /usr/local/lib/ /assets

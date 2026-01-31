@@ -1,0 +1,59 @@
+# UBI8 runtime image based on Red Hat Universal Base Image
+FROM registry.access.redhat.com/ubi8/ubi-minimal:latest
+
+# System configuration
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+ENV TZ=UTC
+
+# Install runtime dependencies
+RUN microdnf update -y && \
+    microdnf install -y \
+        # Core utilities
+        curl \
+        wget \
+        tar \
+        gzip \
+        bzip2 \
+        xz \
+        unzip \
+        zip \
+        # Security
+        ca-certificates \
+        # Development tools
+        git \
+        openssl \
+        # System utilities
+        procps-ng \
+        # Text editors
+        vim-minimal \
+        && microdnf clean all
+
+# Create non-root user for security
+ARG USER_UID=1000
+ARG USER_GID=1000
+ARG USERNAME=appuser
+
+RUN groupadd -r -g ${USER_GID} ${USERNAME} && \
+    useradd -r -m -g ${USERNAME} -u ${USER_UID} ${USERNAME} && \
+    mkdir -p /home/${USERNAME}/.local/bin && \
+    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
+
+# Create common directories
+RUN mkdir -p /opt/app /opt/tools /usr/local/share/ca-certificates && \
+    chown -R ${USERNAME}:${USERNAME} /opt/app /opt/tools
+
+# Add user to PATH
+ENV PATH="/home/${USERNAME}/.local/bin:/usr/local/bin:$PATH"
+
+# Set working directory
+WORKDIR /opt/app
+
+# Switch to non-root user
+USER ${USERNAME}
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD test -f /etc/passwd && test -f /etc/group || exit 1
+
+# Default command
+CMD ["/bin/bash"]

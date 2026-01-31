@@ -1,0 +1,110 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:base",
+    ":dependencyDashboard",
+    ":maintainLockFilesWeekly",
+    ":prHourlyLimitNone",
+    ":prConcurrentLimit10"
+  ],
+  "timezone": "Asia/Dhaka",
+  "schedule": [
+    "before 5am on Monday"
+  ],
+  "packageRules": [
+    {
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "automerge": true,
+      "automergeType": "branch"
+    },
+    {
+      "matchDepTypes": [
+        "devDependencies"
+      ],
+      "automerge": true,
+      "automergeType": "branch"
+    },
+    {
+      "matchPackagePatterns": [
+        "^@neopilot-ai"
+      ],
+      "groupName": "Neopilot-AI packages"
+    },
+    {
+      "matchManagers": [
+        "dockerfile",
+        "docker-compose"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    },
+    {
+      "matchPackagePatterns": [
+        "^golang"
+      ],
+      "groupName": "Go dependencies"
+    },
+    {
+      "matchPackagePatterns": [
+        "^python"
+      ],
+      "groupName": "Python dependencies"
+    },
+    {
+      "matchPackagePatterns": [
+        "^node"
+      ],
+      "groupName": "Node.js dependencies"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "automerge": true,
+    "labels": [
+      "security"
+    ]
+  },
+  "docker": {
+    "enabled": true,
+    "addLabels": [
+      "docker"
+    ],
+    "semanticCommitType": "fix"
+  },
+  "python": {
+    "enabled": true,
+    "addLabels": [
+      "python"
+    ],
+    "semanticCommitType": "fix"
+  },
+  "golang": {
+    "enabled": true,
+    "addLabels": [
+      "go"
+    ],
+    "semanticCommitType": "fix"
+  },
+  "node": {
+    "enabled": true,
+    "addLabels": [
+      "javascript",
+      "dependencies"
+    ],
+    "semanticCommitType": "fix"
+  },
+  "postUpdateOptions": [
+    "gomodTidy",
+    "npmDedupe"
+  ],
+  "prCreation": "not-pending",
+  "rebaseWhen": "behind-base-branch",
+  "platformAutomerge": true
+}

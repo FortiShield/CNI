@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        VARIANT: "3.12"
+        NODE_VERSION: "20.10.0"
+        GO_VERSION: "1.22.5"
+        PYTHON_VERSION: "3.12.7"
+    container_name: cni-dev
+    user: vscode
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace:cached
+      - go-modules:/home/vscode/go/pkg/mod
+      - node-modules:/workspace/node_modules
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DOCKER_BUILDKIT=1
+      - COMPOSE_DOCKER_CLI_BUILD=1
+      - BUILDKIT_INLINE_CACHE=1
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    privileged: true
+    command: sleep infinity
+
+  # Development database
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: cni
+      POSTGRES_PASSWORD: cni-dev
+      POSTGRES_DB: cni_development
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  # Redis for caching
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  go-modules:
+  node-modules:
+  postgres-data:
+  redis-data:

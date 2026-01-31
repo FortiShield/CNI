@@ -1,0 +1,87 @@
+site_name: Neopilot-AI CNI
+site_url: https://neopilot-ai.github.io/CNI/
+site_author: Neopilot-AI Team
+
+# Repository
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Neopilot-AI/CNI
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/u/neopilot-ai
+
+# Theme
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  favicon: assets/favicon.ico
+  logo: assets/logo.png
+
+# Extensions
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - pymdownx.tasks
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+# Navigation
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quick-start.md
+  - Development:
+      - Setup: development/setup.md
+      - Building: development/building.md
+      - Testing: development/testing.md
+  - API Reference:
+      - Go: api/go.md
+      - Python: api/python.md
+      - Node.js: api/nodejs.md
+  - Contributing:
+      - Guidelines: contributing/guidelines.md
+      - Code of Conduct: contributing/code-of-conduct.md
+
+# Plugins
+plugins:
+  - search
+  - git-revision-date-localized:
+      type: timeago
+      timezone: Asia/Dhaka
+  - minify:
+      minify_html: true
+  - rss:
+      match_path: "news/.+\\.md$"
+      date_from_meta:
+        as_creation: date
+
+# Build options
+strict: true
+use_directory_urls: true

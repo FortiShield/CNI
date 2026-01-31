@@ -1,0 +1,47 @@
+# UBI8 runtime image for container registry
+FROM registry.access.redhat.com/ubi8/ubi-minimal:latest
+
+# Configuration
+ENV REGISTRY_VERSION=2.8.2
+ENV REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY=/var/lib/registry
+ENV REGISTRY_HTTP_ADDR=0.0.0.0:5000
+ENV REGISTRY_LOG_LEVEL=info
+ENV REGISTRY_LOG_FORMATTER=json
+
+# System configuration
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+# Install runtime dependencies
+RUN microdnf update -y && \
+    microdnf install -y \
+        ca-certificates \
+        curl \
+        && microdnf clean all
+
+# Create registry user
+RUN groupadd -r registry && \
+    useradd -r -g registry -d /var/lib/registry -s /sbin/nologin registry
+
+# Create directories
+RUN mkdir -p /var/lib/registry /etc/docker/registry /usr/local/bin && \
+    chown -R registry:registry /var/lib/registry /etc/docker/registry
+
+# Copy assets (from build stage)
+COPY --chown=registry:registry assets/ /
+
+# Set permissions
+RUN chmod +x /scripts/healthcheck && \
+    chmod +x /usr/local/bin/registry
+
+# Expose port
+EXPOSE 5000
+
+# Switch to non-root user
+USER registry
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD /scripts/healthcheck
+
+# Default command
+CMD ["registry", "serve", "/etc/docker/registry/config.yml"]

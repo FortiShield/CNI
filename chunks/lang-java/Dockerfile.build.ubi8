@@ -1,0 +1,15 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ARG JAVA_VERSION=11
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && curl -L https://download.java.net/java/GA/jdk11/9/GPL/openjdk-${JAVA_VERSION}_linux-x64_bin.tar.gz -o openjdk-${JAVA_VERSION}.tar.gz \
+    && tar -xzf openjdk-${JAVA_VERSION}.tar.gz \
+    && mkdir -p /usr/local/openjdk-${JAVA_VERSION} \
+    && mv jdk-${JAVA_VERSION}/* /usr/local/openjdk-${JAVA_VERSION}/ \
+    && ln -s /usr/local/openjdk-${JAVA_VERSION} /usr/local/java \
+    && cp -R --parents /usr/local/java /assets

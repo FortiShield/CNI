@@ -1,0 +1,35 @@
+# UBI8 build stage for container registry
+ARG BUILD_IMAGE=registry.access.redhat.com/ubi8/ubi-minimal:latest
+
+FROM ${BUILD_IMAGE}
+
+# System configuration
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+# Install build dependencies
+RUN microdnf update -y && \
+    microdnf install -y \
+        curl \
+        tar \
+        gzip \
+        && microdnf clean all
+
+# Build arguments
+ARG REGISTRY_VERSION=2.8.2
+
+# Download and prepare registry binary
+RUN mkdir -p /assets && \
+    curl -fsSL https://github.com/distribution/distribution/releases/download/v${REGISTRY_VERSION}/registry_${REGISTRY_VERSION}_linux_amd64.tar.gz -o registry.tar.gz && \
+    tar -xzf registry.tar.gz && \
+    mkdir -p /assets/usr/local/bin && \
+    cp registry /assets/usr/local/bin/ && \
+    mkdir -p /assets/etc/docker/registry && \
+    cp config.yml /assets/etc/docker/registry/ 2>/dev/null || true && \
+    mkdir -p /assets/scripts && \
+    cp scripts/healthcheck /assets/scripts/ 2>/dev/null || true
+
+# Set working directory
+WORKDIR /build
+
+# Default command for build stage
+CMD ["/bin/bash"]

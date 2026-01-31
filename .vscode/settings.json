@@ -1,0 +1,59 @@
+{
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 1000,
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": true
+    },
+    "go.useLanguageServer": true,
+    "go.toolsManagement.autoUpdate": true,
+    "go.lintOnSave": "file",
+    "go.vetOnSave": "package",
+    "go.buildOnSave": "package",
+    "go.testOnSave": false,
+    "go.coverageDecorator": {
+        "type": "gutter",
+        "coveredHighlightColor": "rgba(64,128,128,0.5)",
+        "uncoveredHighlightColor": "rgba(128,64,64,0.25)",
+        "coveredGutterStyle": "blockgreen",
+        "uncoveredGutterStyle": "blockred"
+    },
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.autoImportCompletions": true,
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": true,
+    "python.linting.banditEnabled": true,
+    "python.linting.mypyEnabled": true,
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": [
+        "--line-length",
+        "100"
+    ],
+    "python.linting.pylintArgs": [
+        "--max-line-length=100",
+        "--ignore-patterns=__pycache__"
+    ],
+    "yaml.schemas": {
+        "https://json.schemastore.org/github-workflow.json": ".github/workflows/*.yml"
+    },
+    "yaml.format.enable": true,
+    "yaml.validate": true,
+    "docker.containers.descriptionLabels": {
+        "org.opencontainers.image.title": "${local:ContainerName}",
+        "org.opencontainers.image.version": "${local:ImageTag}",
+        "org.opencontainers.image.created": "${local:ImageCreated}",
+        "org.opencontainers.image.revision": "${local:ImageRevision}",
+        "org.opencontainers.image.source": "${local:ImageSource}",
+        "org.opencontainers.image.vendor": "Neopilot-AI"
+    },
+    "makefile.extensionOutputFolder": ".vscode",
+    "makefile.extensionLogfile": "/tmp/makefile-extension.log",
+    "makefile.buildBeforeRun": true,
+    "makefile.clearOutputBeforeBuild": true,
+    "makefile.buildLog": "${workspaceRoot}/.vscode/make.log",
+    "makefile.parallelBuildJobs": 4,
+    "makefile.preConfigureScript": "${workspaceFolder}/build-scripts/setup-buildkit.sh",
+    "makefile.buildDirectory": "${workspaceFolder}",
+    "makefile.makePath": "make",
+    "makefile.makefilePath": "${workspaceFolder}/Makefile"
+}

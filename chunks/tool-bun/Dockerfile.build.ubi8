@@ -1,0 +1,14 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ARG BUN_VERSION=0.6.3
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && curl -L https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip -o bun.zip \
+    && unzip bun.zip \
+    && mkdir -p /usr/local/bin \
+    && mv bun-linux-x64/bun /usr/local/bin/bun \
+    && cp -R --parents /usr/local/bin/bun /assets

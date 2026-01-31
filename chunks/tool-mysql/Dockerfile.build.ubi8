@@ -1,0 +1,16 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ARG MYSQL_VERSION=8.0.19
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && curl -L https://dev.mysql.com/get/Downloads/MySQL-${MYSQL_VERSION%.*}/mysql-${MYSQL_VERSION}.tar.gz -o mysql.tar.gz \
+    && tar -xzf mysql.tar.gz \
+    && cd mysql-${MYSQL_VERSION} \
+    && cmake . -DCMAKE_INSTALL_PREFIX=/usr/local/mysql \
+    && make -j "$(nproc)" \
+    && make -j "$(nproc)" install \
+    && cp -R --parents /usr/local/mysql /assets

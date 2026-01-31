@@ -1,0 +1,14 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ARG DOCKER_VERSION=19.03.8
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && curl -L https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz -o docker.tgz \
+    && tar -xzf docker.tgz \
+    && mkdir -p /usr/local/bin \
+    && mv docker/docker /usr/local/bin/docker \
+    && cp -R --parents /usr/local/bin/docker /assets

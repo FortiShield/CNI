@@ -1,0 +1,92 @@
+{
+    "name": "Neopilot-AI/CNI Development Environment",
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+        "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+        "ghcr.io/devcontainers/features/git:1": {},
+        "ghcr.io/devcontainers/features/go:1": {
+            "version": "1.22.5"
+        },
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "20.10.0",
+            "nodeGypLocation": "/usr/local/bin/node-gyp"
+        },
+        "ghcr.io/devcontainers/features/python:1": {
+            "version": "3.12.7",
+            "installTools": true
+        }
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-azuretools.vscode-docker",
+                "ms-vscode.makefile-tools",
+                "golang.go",
+                "ms-python.python",
+                "ms-vscode.vscode-json",
+                "redhat.vscode-yaml",
+                "ms-vscode.vscode-shell-script",
+                "github.copilot",
+                "github.copilot-chat",
+                "ms-vscode.vscode-trust-policies",
+                "streetsidesoftware.code-spell-checker"
+            ],
+            "settings": {
+                "terminal.integrated.shell.linux": "/bin/bash",
+                "files.autoSave": "afterDelay",
+                "files.autoSaveDelay": 1000,
+                "editor.formatOnSave": true,
+                "editor.codeActionsOnSave": {
+                    "source.organizeImports": "explicit"
+                },
+                "python.defaultInterpreterPath": "/usr/local/bin/python",
+                "go.gopath": "/home/vscode/go",
+                "go.goroot": "/usr/local/go",
+                "go.toolsManagement.checkForUpdates": "local",
+                "go.useLanguageServer": true,
+                "go.gocodeAutoBuild": false,
+                "go.lintOnSave": "file",
+                "go.vetOnSave": "package",
+                "go.buildOnSave": "package",
+                "go.testOnSave": false,
+                "docker.languageserver.formatter.ignoreMultilineInstructions": true,
+                "makefile.configureOnOpen": true
+            }
+        }
+    },
+    "forwardPorts": [
+        3000,
+        8080,
+        5432,
+        6379
+    ],
+    "portsAttributes": {
+        "3000": {
+            "label": "Application Port",
+            "onAutoForward": "notify"
+        },
+        "8080": {
+            "label": "Development Server",
+            "onAutoForward": "notify"
+        },
+        "5432": {
+            "label": "PostgreSQL Database",
+            "onAutoForward": "ignore"
+        },
+        "6379": {
+            "label": "Redis Cache",
+            "onAutoForward": "ignore"
+        }
+    },
+    "postCreateCommand": "sudo chmod +x /workspace/build-scripts/*.sh && sudo chmod +x /workspace/tests/*.sh && make setup-buildkit",
+    "remoteUser": "vscode",
+    "mounts": [
+        "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
+        "source=${localWorkspaceFolder}/.git,target=/workspace/.git,type=bind,consistency=cached"
+    ],
+    "runArgs": [
+        "--cap-add=SYS_PTRACE",
+        "--security-opt=seccomp=unconfined",
+        "--privileged"
+    ]
+}

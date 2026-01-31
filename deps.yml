@@ -1,0 +1,162 @@
+# CNI Project Dependencies Configuration
+# This file defines external dependencies and their versions for the CNI project
+
+version: "1.0"
+
+# Base images
+base_images:
+  debian:
+    bookworm-slim: "latest"
+    stretch-slim: "latest"
+  alpine:
+    alpine: "3.19"
+  ubi8:
+    ubi-minimal: "latest"
+    ubi: "latest"
+
+# Language runtime versions
+languages:
+  python:
+    version: "3.7.3"
+    source: "https://www.python.org/ftp/python"
+  go:
+    version: "1.14.1"
+    source: "https://dl.google.com/go"
+  java:
+    version: "11"
+    source: "https://download.java.net/java/GA/jdk11"
+  node:
+    version: "12.16.1"
+    source: "https://nodejs.org/dist"
+  ruby:
+    version: "2.7.0"
+    source: "https://cache.ruby-lang.org/pub/ruby"
+  elixir:
+    version: "1.9.4"
+    otp_version: "22.2"
+    source: "https://github.com/elixir-lang/elixir/archive"
+  rust:
+    version: "1.42.0"
+    source: "https://static.rust-lang.org/rustup"
+  php:
+    version: "7.4.3"
+    source: "https://www.php.net/distributions"
+  cpp:
+    gcc_version: "9.3.0"
+    source: "https://ftp.gnu.org/gnu/gcc"
+  csharp:
+    version: "3.1.3"
+    source: "https://download.visualstudio.microsoft.com/download"
+
+# Tool versions
+tools:
+  brew:
+    source: "https://github.com/Homebrew/brew"
+  bun:
+    version: "0.6.3"
+    source: "https://github.com/oven-sh/bun/releases"
+  docker:
+    version: "19.03.8"
+    source: "https://download.docker.com/linux/static/stable/x86_64"
+  chrome:
+    version: "81.0.4044.113"
+    source: "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable"
+  nginx:
+    version: "1.17.10"
+    source: "https://nginx.org/download"
+  mysql:
+    version: "8.0.19"
+    source: "https://dev.mysql.com/get/Downloads/MySQL-8.0"
+
+# Component versions
+components:
+  alpine_certificates:
+    alpine_version: "3.19"
+    cert_package: "20250911-r0"
+  git:
+    version: "2.43.0"
+    source: "https://github.com/git/git"
+  cfssl:
+    version: "1.6.4"
+    source: "https://github.com/cloudflare/cfssl"
+  kubectl:
+    version: "1.28.2"
+    source: "https://dl.k8s.io/release"
+  postgresql:
+    version: "13.7"
+    source: "https://ftp.postgresql.org/source"
+  container_registry:
+    version: "2.8.2"
+    source: "https://github.com/distribution/distribution"
+
+# Security and compliance
+security:
+  base_user_uid: 1000
+  base_user_gid: 1000
+  base_username: appuser
+  git_user_uid: 65534
+  cert_user_uid: 1001
+
+# Build configuration
+build:
+  default_registry: "localhost:5000"
+  default_parallel_jobs: 4
+  default_retry_count: 3
+  build_timeout: "3600s"
+  
+# Network configuration
+network:
+  container_registry_port: 5000
+  git_ssh_port: 22
+  postgresql_port: 5432
+  nginx_port: 80
+
+# Storage paths
+storage:
+  registry_data: "/var/lib/registry"
+  git_home: "/home/gituser"
+  postgresql_data: "/var/lib/postgresql"
+  certificates: "/etc/ssl/certs"
+  build_artifacts: "/build"
+  chunk_assets: "/build/assets"
+
+# Health check configuration
+health_checks:
+  default_interval: "30s"
+  default_timeout: "10s"
+  default_start_period: "5s"
+  default_retries: 3
+
+# Logging configuration
+logging:
+  default_level: "info"
+  default_format: "json"
+  registry_log_level: "info"
+
+# Environment variables
+environment:
+  lang: "C.UTF-8"
+  lc_all: "C.UTF-8"
+  timezone: "UTC"
+  debian_frontend: "noninteractive"
+
+# Validation rules
+validation:
+  required_tools:
+    - docker
+    - curl
+  optional_tools:
+    - skopeo
+    - jq
+  min_disk_space: "1GB"
+  supported_architectures:
+    - "linux/amd64"
+    - "linux/arm64"
+
+# Release configuration
+release:
+  default_version: "1.0.0"
+  default_target_registry: "docker.io/myorg"
+  image_prefix: "cni-"
+  include_manifest: true
+  include_archive: false

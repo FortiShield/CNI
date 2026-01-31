@@ -1,0 +1,11 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && git clone https://github.com/Homebrew/brew /tmp/brew \
+    && mkdir -p /usr/local/homebrew \
+    && mv /tmp/brew/* /usr/local/homebrew/ \
+    && cp -R --parents /usr/local/homebrew /assets

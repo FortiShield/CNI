@@ -1,0 +1,14 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ARG GO_VERSION=1.14.1
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && curl -L https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz -o go${GO_VERSION}.tar.gz \
+    && tar -xzf go${GO_VERSION}.tar.gz \
+    && mkdir -p /usr/local/go \
+    && mv go/* /usr/local/go/ \
+    && cp -R --parents /usr/local/go /assets

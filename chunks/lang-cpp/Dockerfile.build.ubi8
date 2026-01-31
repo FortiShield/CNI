@@ -1,0 +1,17 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ARG GCC_VERSION=9.3.0
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && curl -L https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.gz -o gcc-${GCC_VERSION}.tar.gz \
+    && tar -xzf gcc-${GCC_VERSION}.tar.gz \
+    && cd gcc-${GCC_VERSION} \
+    && ./contrib/download_prerequisites \
+    && ./configure --prefix=/usr/local --enable-languages=c,c++ --disable-multilib \
+    && make -j "$(nproc)" \
+    && make -j "$(nproc)" install \
+    && cp -R --parents /usr/local/{bin,lib,include} /assets

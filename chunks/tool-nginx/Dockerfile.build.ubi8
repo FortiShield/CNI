@@ -1,0 +1,16 @@
+ARG BUILD_IMAGE=
+
+FROM ${BUILD_IMAGE}
+
+ARG NGINX_VERSION=1.17.10
+
+ENV LANG=C.UTF-8
+
+RUN mkdir /assets \
+    && curl -L https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz -o nginx.tar.gz \
+    && tar -xzf nginx.tar.gz \
+    && cd nginx-${NGINX_VERSION} \
+    && ./configure --prefix=/usr/local/nginx \
+    && make -j "$(nproc)" \
+    && make -j "$(nproc)" install \
+    && cp -R --parents /usr/local/nginx /assets
