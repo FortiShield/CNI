@@ -169,7 +169,7 @@ jobs:
     strategy:
       matrix:
         test-suite: [base, language, container]
-        max-parallel: 3
+      max-parallel: 3
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -339,7 +339,7 @@ jobs:
     strategy:
       matrix:
         chunk: [lang-go, lang-node, lang-python, lang-rust, lang-php, lang-java, lang-ruby, lang-cpp, lang-csharp, lang-elixir]
-        max-parallel: 4
+      max-parallel: 4
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
