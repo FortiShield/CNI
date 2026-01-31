@@ -43,7 +43,7 @@ jobs:
 
       - name: Build documentation
         run: |
-          cd docs && mkdocs build --strict --verbose --site-dir ../public
+          cd docs && mkdocs build --strict --verbose --config-file ../mkdocs.yml --site-dir ../public
 
       - name: Setup Pages
         uses: actions/configure-pages@v3
