@@ -1,7 +1,7 @@
 # Load versions from unified dependency management
 ARG BASE_DEBIAN_VERSION=bookworm-slim
 ARG PYTHON_VERSION=3.12.7
-ARG GO_VERSION=1.22.5
+ARG GO_VERSION=1.22.12
 ARG NODE_VERSION=20.10.0
 
 # Import user configuration
