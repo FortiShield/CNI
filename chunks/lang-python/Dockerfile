@@ -9,10 +9,11 @@ ARG BASE_USER_UID=10001
 ARG BASE_USER_GID=10001
 ARG BASE_USERNAME=appuser
 
-FROM debian:${BASE_DEBIAN_VERSION} as python-builder
+FROM debian:${BASE_DEBIAN_VERSION} AS python-builder
 
 # System configuration
 ARG DEBIAN_FRONTEND=noninteractive
+ARG PYTHON_VERSION
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC
 
 # Install build dependencies with cache mount
@@ -37,9 +38,9 @@ RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache \
 
 # Build Python from source
 ARG BUILD_DIR=/tmp/build
-RUN mkdir ${BUILD_DIR} && \
-    curl -fsSL https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz \
-    | tar -xz -C ${BUILD_DIR} && \
+RUN mkdir -p ${BUILD_DIR} && \
+    curl -fsSL "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
+    | tar -xzf - -C ${BUILD_DIR} && \
     cd ${BUILD_DIR}/Python-${PYTHON_VERSION} && \
     ./configure --enable-shared --with-readline=editline --with-dbmliborder= --enable-optimizations && \
     make -j$(nproc) && \

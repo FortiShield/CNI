@@ -3,7 +3,7 @@
     "files.autoSaveDelay": 1000,
     "editor.formatOnSave": true,
     "editor.codeActionsOnSave": {
-        "source.organizeImports": true
+        "source.organizeImports": "explicit"
     },
     "go.useLanguageServer": true,
     "go.toolsManagement.autoUpdate": true,

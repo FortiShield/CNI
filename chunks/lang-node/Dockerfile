@@ -9,10 +9,11 @@ ARG BASE_USER_UID=10001
 ARG BASE_USER_GID=10001
 ARG BASE_USERNAME=appuser
 
-FROM debian:${BASE_DEBIAN_VERSION} as node-builder
+FROM debian:${BASE_DEBIAN_VERSION} AS node-builder
 
 # System configuration
 ARG DEBIAN_FRONTEND=noninteractive
+ARG NODE_VERSION
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC
 
 # Install build dependencies with cache mount
@@ -20,21 +21,27 @@ RUN --mount=type=cache,target=/var/cache/apt \
     --mount=type=cache,target=/var/lib/apt \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        build-essential \
-        ca-certificates \
-        curl \
-        file \
-        gcc \
-        g++ \
-        make \
-        python3
+    build-essential \
+    ca-certificates \
+    curl \
+    file \
+    gcc \
+    g++ \
+    make \
+    python3
 
 # Download and install Node.js
 ARG BUILD_DIR=/tmp/build
-RUN mkdir ${BUILD_DIR} && \
-    curl -fsSL https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz \
-    | tar -xz -C ${BUILD_DIR} && \
-    mv ${BUILD_DIR}/node-v${NODE_VERSION}-linux-x64 /usr/local/node && \
+ARG TARGETARCH
+RUN mkdir -p ${BUILD_DIR} && \
+    NODE_ARCH=$(case ${TARGETARCH:-amd64} in \
+    amd64) echo "x64" ;; \
+    arm64) echo "arm64" ;; \
+    *) echo "x64" ;; \
+    esac) && \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.gz" \
+    | tar -xzf - -C ${BUILD_DIR} && \
+    mv ${BUILD_DIR}/node-v${NODE_VERSION}-linux-${NODE_ARCH} /usr/local/node && \
     rm -rf ${BUILD_DIR}
 
 # Final runtime image
@@ -50,9 +57,9 @@ RUN --mount=type=cache,target=/var/cache/apt \
     --mount=type=cache,target=/var/lib/apt \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        && rm -rf /var/lib/apt/lists/*
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy Node.js from builder stage
 COPY --from=node-builder /usr/local/node /usr/local/node

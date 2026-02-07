@@ -9,10 +9,11 @@ ARG BASE_USER_UID=10001
 ARG BASE_USER_GID=10001
 ARG BASE_USERNAME=appuser
 
-FROM debian:${BASE_DEBIAN_VERSION} as go-builder
+FROM debian:${BASE_DEBIAN_VERSION} AS go-builder
 
 # System configuration
 ARG DEBIAN_FRONTEND=noninteractive
+ARG GO_VERSION
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC
 
 # Install build dependencies with cache mount
@@ -33,9 +34,10 @@ RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache \
 
 # Download and install Go
 ARG BUILD_DIR=/tmp/build
-RUN mkdir ${BUILD_DIR} && \
-    curl -fsSL https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz \
-    | tar -xz -C ${BUILD_DIR} && \
+ARG TARGETARCH
+RUN mkdir -p ${BUILD_DIR} && \
+    curl -fsSL "https://dl.google.com/go/go${GO_VERSION}.linux-${TARGETARCH:-amd64}.tar.gz" \
+    | tar -xzf - -C ${BUILD_DIR} && \
     mv ${BUILD_DIR}/go /usr/local/go && \
     rm -rf ${BUILD_DIR}
 
