@@ -17,10 +17,13 @@ ARG NODE_VERSION
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC
 
 # Install build dependencies with cache mount
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache \
+    --mount=type=cache,target=/var/lib/apt,id=apt-lib \
+    rm -f /var/lib/apt/lists/lock \
+    && rm -f /var/cache/apt/archives/lock \
+    && rm -f /var/lib/dpkg/lock* \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \
@@ -53,10 +56,13 @@ ARG BASE_USER_GID
 ARG BASE_USERNAME
 
 # Install runtime dependencies only
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-runtime \
+    --mount=type=cache,target=/var/lib/apt,id=apt-lib-runtime \
+    rm -f /var/lib/apt/lists/lock \
+    && rm -f /var/cache/apt/archives/lock \
+    && rm -f /var/lib/dpkg/lock* \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
