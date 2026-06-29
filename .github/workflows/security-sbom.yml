@@ -52,8 +52,12 @@ jobs:
     - name: Load version variables
       run: |
         if [ -f "versions.env" ]; then
-          export $(cat versions.env | grep -v '^#' | xargs)
-          echo "Loaded versions from versions.env"
+          while IFS='=' read -r key value; do
+            # Skip comments and empty lines
+            [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+            echo "${key}=${value}" >> "$GITHUB_ENV"
+          done < versions.env
+          echo "Loaded versions from versions.env into GITHUB_ENV"
         fi
     
     - name: Set up Docker Buildx
